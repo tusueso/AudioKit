@@ -9,9 +9,9 @@
 import AudioKit
 
 class FilterSection: AKNode {
-    var parameters: [Double] = [1000, 0.9, 1000, 1, 0]
+    var parameters: [Double] = [1_000, 0.9, 1_000, 1, 0]
 
-    var cutoffFrequency: Double = 1000 {
+    var cutoffFrequency: Double = 1_000 {
         didSet {
             parameters[0] = cutoffFrequency
             output.parameters = parameters
@@ -25,7 +25,7 @@ class FilterSection: AKNode {
         }
     }
 
-    var lfoAmplitude: Double = 1000 {
+    var lfoAmplitude: Double = 1_000 {
         didSet {
             parameters[2] = lfoAmplitude
             output.parameters = parameters
@@ -50,17 +50,21 @@ class FilterSection: AKNode {
 
     init(_ input: AKNode) {
 
-        let cutoff   = AKOperation.parameters(0)
-        let rez      = AKOperation.parameters(1)
-        let oscAmp   = AKOperation.parameters(2)
-        let oscRate  = AKOperation.parameters(3)
-        let oscIndex = AKOperation.parameters(4)
+        output = AKOperationEffect(input) { input, parameters in
 
-        let lfo = AKOperation.morphingOscillator(frequency: oscRate, amplitude: oscAmp, index: oscIndex)
+            let cutoff = parameters[0]
+            let rez = parameters[1]
+            let oscAmp = parameters[2]
+            let oscRate = parameters[3]
+            let oscIndex = parameters[4]
 
-        let moog = AKOperation.input.moogLadderFilter(cutoffFrequency: max(lfo + cutoff, 0), resonance: rez)
+            let lfo = AKOperation.morphingOscillator(frequency: oscRate,
+                                                     amplitude: oscAmp,
+                                                     index: oscIndex)
 
-        output = AKOperationEffect(input, operation: moog)
+            return input.moogLadderFilter(cutoffFrequency: max(lfo + cutoff, 0),
+                                          resonance: rez)
+        }
         output.parameters = parameters
 
         super.init()

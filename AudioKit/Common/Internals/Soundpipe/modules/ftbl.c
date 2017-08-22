@@ -8,6 +8,8 @@
 #define M_PI		3.14159265358979323846	/* pi */
 #endif
 
+#define tpd360  0.0174532925199433
+
 int sp_ftbl_create(sp_data *sp, sp_ftbl **ft, size_t size)
 {
     *ft = malloc(sizeof(sp_ftbl));
@@ -19,41 +21,72 @@ int sp_ftbl_create(sp_data *sp, sp_ftbl **ft, size_t size)
     ftp->lobits = log2(SP_FT_MAXLEN / size);
     ftp->lomask = (2^ftp->lobits) - 1;
     ftp->lodiv = 1.0 / pow(2, ftp->lobits);
+    ftp->del = 1;
+    return SP_OK;
+}
+
+int sp_ftbl_bind(sp_data *sp, sp_ftbl **ft, SPFLOAT *tbl, size_t size)
+{
+    *ft = malloc(sizeof(sp_ftbl));
+    sp_ftbl *ftp = *ft;
+    ftp->size = size;
+    ftp->tbl = tbl;
+    ftp->sicvt = 1.0 * SP_FT_MAXLEN / sp->sr;
+    ftp->lobits = log2(SP_FT_MAXLEN / size);
+    ftp->lomask = (2^ftp->lobits) - 1;
+    ftp->lodiv = 1.0 / pow(2, ftp->lobits);
+    ftp->del = 0;
     return SP_OK;
 }
 
 int sp_ftbl_destroy(sp_ftbl **ft)
 {
     sp_ftbl *ftp = *ft;
-    free(ftp->tbl);
+    if(ftp->del) free(ftp->tbl);
     free(*ft);
     return SP_OK;
 }
 
+/* TODO: handle spaces at beginning of string */
+static char * tokenize(char **next, int *size)
+{
+    if(*size <= 0) return NULL;
+    char *token = *next;
+    char *str = *next;
+
+    char *peak = str + 1;
+
+    while((*size)--) {
+        if(*str == ' ') {
+            *str = 0;
+            if(*peak != ' ') break;
+        }
+        str = str + 1;
+        peak = str + 1;
+    }
+    *next = peak;
+    return token;
+}
+
 int sp_gen_vals(sp_data *sp, sp_ftbl *ft, const char *string)
 {
-    char *str1 = NULL, *token = NULL, *t;
-    char *saveptr1 = NULL;
-    int j;
-    char *d;
-    d = malloc(sizeof(char) + 1);
-    d[0] = ' ';
-    d[1] = 0;
-    t = malloc(sizeof(char) * (strlen(string) + 1));
-    strcpy(t, string);
-    for (j = 0, str1 = t; ; j++, str1 = NULL) {
-        token = strtok_r(str1, d, &saveptr1);
-        if (token == NULL)
-            break;
+    int size = (int)strlen(string);
+    char *str = malloc(sizeof(char) * size + 1);
+    strcpy(str, string);
+    char *out; 
+    char *ptr = str;
+    int j = 0;
+    while(size > 0) {
+        out = tokenize(&str, &size);
         if(ft->size < j + 1){
             ft->tbl = realloc(ft->tbl, sizeof(SPFLOAT) * (ft->size + 2));
             ft->size++;
         }
-        ft->tbl[j] = atof(token);
+        ft->tbl[j] = atof(out);
+        j++;
     }
-
-    free(t);
-    free(d);
+   
+    free(ptr); 
     return SP_OK;
 }
 
@@ -69,30 +102,49 @@ int sp_gen_sine(sp_data *sp, sp_ftbl *ft)
 
 #ifndef NO_LIBSNDFILE
 /*TODO: add error checking, make tests */
-//int sp_gen_file(sp_data *sp, sp_ftbl *ft, const char *filename)
-//{
-//    SF_INFO info;
-//    info.format = 0;
-//    SNDFILE *snd = sf_open(filename, SFM_READ, &info);
-//    sf_readf_float(snd, ft->tbl, ft->size);
-//    sf_close(snd);
-//    return SP_OK;
-//}
-//
-//int sp_ftbl_loadfile(sp_data *sp, sp_ftbl **ft, const char *filename)
-//{
-//    *ft = malloc(sizeof(sp_ftbl));
-//    sp_ftbl *ftp = *ft;
-//    SF_INFO info;
-//    info.format = 0;
-//    SNDFILE *snd = sf_open(filename, SFM_READ, &info);
-//    size_t size = info.frames * info.channels;
-//    ftp->size = size;
-//    ftp->tbl = malloc(sizeof(SPFLOAT) * (size + 1));
-//    sf_readf_float(snd, ftp->tbl, ftp->size);
-//    sf_close(snd);
-//    return SP_OK;
-//}
+int sp_gen_file(sp_data *sp, sp_ftbl *ft, const char *filename)
+{
+    SF_INFO info;
+    memset(&info, 0, sizeof(SF_INFO));
+    info.format = 0;
+    SNDFILE *snd = sf_open(filename, SFM_READ, &info);
+#ifdef USE_DOUBLE
+    sf_readf_double(snd, ft->tbl, ft->size);
+#else
+    sf_readf_float(snd, ft->tbl, ft->size);
+#endif
+    sf_close(snd);
+    return SP_OK;
+}
+
+int sp_ftbl_loadfile(sp_data *sp, sp_ftbl **ft, const char *filename)
+{
+    *ft = malloc(sizeof(sp_ftbl));
+    sp_ftbl *ftp = *ft;
+    SF_INFO info;
+    memset(&info, 0, sizeof(SF_INFO));
+    info.format = 0;
+    SNDFILE *snd = sf_open(filename, SFM_READ, &info);
+    if(snd == NULL) {
+        return SP_NOT_OK;
+    }
+    size_t size = info.frames * info.channels;
+
+    ftp->size = size;
+    ftp->sicvt = 1.0 * SP_FT_MAXLEN / sp->sr;
+    ftp->tbl = malloc(sizeof(SPFLOAT) * (size + 1));
+    ftp->lobits = log2(SP_FT_MAXLEN / size);
+    ftp->lomask = (2^ftp->lobits) - 1;
+    ftp->lodiv = 1.0 / pow(2, ftp->lobits);
+
+#ifdef USE_DOUBLE
+    sf_readf_double(snd, ftp->tbl, ftp->size);
+#else
+    sf_readf_float(snd, ftp->tbl, ftp->size);
+#endif
+    sf_close(snd);
+    return SP_OK;
+}
 #endif
 
 /* port of GEN10 from Csound */
@@ -266,5 +318,54 @@ int sp_gen_gauss(sp_data *sp, sp_ftbl *ft, SPFLOAT scale, uint32_t seed)
         ft->tbl[n] = gaussrand(&rand, scale);
     }
 
+    return SP_OK;
+}
+
+/* based off of GEN 19 */
+int sp_gen_composite(sp_data *sp, sp_ftbl *ft, const char *argstring)
+{
+    SPFLOAT phs, inc, amp, dc, tpdlen = 2 * M_PI/ (SPFLOAT) ft->size;
+    int i, n;
+    
+    sp_ftbl *args;
+    sp_ftbl_create(sp, &args, 1);
+    sp_gen_vals(sp, args, argstring);
+
+    for(n = 0; n < args->size; n += 4) {
+        inc = args->tbl[n] * tpdlen;
+        amp = args->tbl[n + 1];
+        phs = args->tbl[n + 2] * tpd360;
+        dc = args->tbl[n + 3];
+
+        for (i = 0; i <ft->size ; i++) {
+            ft->tbl[i] += (SPFLOAT) (sin(phs) * amp + dc);
+            if ((phs += inc) >= 2 * M_PI) phs -= 2 * M_PI;
+        }
+    }
+
+    sp_ftbl_destroy(&args);
+    return SP_OK;
+}
+
+int sp_gen_rand(sp_data *sp, sp_ftbl *ft, const char *argstring)
+{
+    sp_ftbl *args;
+    sp_ftbl_create(sp, &args, 1);
+    sp_gen_vals(sp, args, argstring);
+    int n, pos = 0, i, size = 0;
+
+    for(n = 0; n < args->size; n += 2) {
+        size = round(ft->size * args->tbl[n + 1]);
+        for(i = 0; i < size; i++) {
+            if(pos < ft->size) {
+                ft->tbl[pos] = args->tbl[n];
+                pos++;
+            }
+        }
+    }
+    if(pos <= ft->size) {
+        ft->size = pos;
+    }
+    sp_ftbl_destroy(&args);
     return SP_OK;
 }

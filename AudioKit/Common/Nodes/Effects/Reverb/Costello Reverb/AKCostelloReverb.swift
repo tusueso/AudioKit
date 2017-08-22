@@ -3,123 +3,129 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
-
-import AVFoundation
 
 /// 8 delay line stereo FDN reverb, with feedback matrix based upon physical
 /// modeling scattering junction of 8 lossless waveguides of equal
 /// characteristic impedance.
 ///
-/// - parameter input: Input node to process
-/// - parameter feedback: Feedback level in the range 0 to 1. 0.6 gives a good small 'live' room sound, 0.8 a small hall, and 0.9 a large hall. A setting of exactly 1 means infinite length, while higher values will make the opcode unstable.
-/// - parameter cutoffFrequency: Low-pass cutoff frequency.
-///
-public class AKCostelloReverb: AKNode, AKToggleable {
+open class AKCostelloReverb: AKNode, AKToggleable, AKComponent {
+    public typealias AKAudioUnitType = AKCostelloReverbAudioUnit
+    /// Four letter unique description of the node
+    public static let ComponentDescription = AudioComponentDescription(effect: "rvsc")
 
     // MARK: - Properties
 
+    private var internalAU: AKAudioUnitType?
+    private var token: AUParameterObserverToken?
 
-    internal var internalAU: AKCostelloReverbAudioUnit?
-    internal var token: AUParameterObserverToken?
+    fileprivate var feedbackParameter: AUParameter?
+    fileprivate var cutoffFrequencyParameter: AUParameter?
 
-    private var feedbackParameter: AUParameter?
-    private var cutoffFrequencyParameter: AUParameter?
+    /// Ramp Time represents the speed at which parameters are allowed to change
+    open dynamic var rampTime: Double = AKSettings.rampTime {
+        willSet {
+            internalAU?.rampTime = newValue
+        }
+    }
 
-    /// Feedback level in the range 0 to 1. 0.6 gives a good small 'live' room sound, 0.8 a small hall, and 0.9 a large hall. A setting of exactly 1 means infinite length, while higher values will make the opcode unstable.
-    public var feedback: Double = 0.6 {
-        willSet(newValue) {
+    /// Feedback level in the range 0 to 1. 0.6 gives a good small 'live' room sound, 0.8 a small hall, and 0.9 a
+    /// large hall. A setting of exactly 1 means infinite length, while higher values will make the opcode unstable.
+    open dynamic var feedback: Double = 0.6 {
+        willSet {
             if feedback != newValue {
-                feedbackParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        feedbackParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.feedback = Float(newValue)
+                }
             }
         }
     }
     /// Low-pass cutoff frequency.
-    public var cutoffFrequency: Double = 4000 {
-        willSet(newValue) {
+    open dynamic var cutoffFrequency: Double = 4_000 {
+        willSet {
             if cutoffFrequency != newValue {
-                cutoffFrequencyParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        cutoffFrequencyParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.cutoffFrequency = Float(newValue)
+                }
             }
         }
     }
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    public var isStarted: Bool {
-        return internalAU!.isPlaying()
+    open dynamic var isStarted: Bool {
+        return internalAU?.isPlaying() ?? false
     }
 
     // MARK: - Initialization
 
     /// Initialize this reverb node
     ///
-    /// - parameter input: Input node to process
-    /// - parameter feedback: Feedback level in the range 0 to 1. 0.6 gives a good small 'live' room sound, 0.8 a small hall, and 0.9 a large hall. A setting of exactly 1 means infinite length, while higher values will make the opcode unstable.
-    /// - parameter cutoffFrequency: Low-pass cutoff frequency.
+    /// - Parameters:
+    ///   - input: Input node to process
+    ///   - feedback: Feedback level in the range 0 to 1. 0.6 gives a good small 'live' room sound, 0.8 a small hall,
+    ///               and 0.9 a large hall. A setting of exactly 1 means infinite length, while higher values will
+    ///               make the opcode unstable.
+    ///   - cutoffFrequency: Low-pass cutoff frequency.
     ///
     public init(
-        _ input: AKNode,
+        _ input: AKNode?,
         feedback: Double = 0.6,
-        cutoffFrequency: Double = 4000) {
+        cutoffFrequency: Double = 4_000) {
 
         self.feedback = feedback
         self.cutoffFrequency = cutoffFrequency
 
-        var description = AudioComponentDescription()
-        description.componentType         = kAudioUnitType_Effect
-        description.componentSubType      = 0x72767363 /*'rvsc'*/
-        description.componentManufacturer = 0x41754b74 /*'AuKt'*/
-        description.componentFlags        = 0
-        description.componentFlagsMask    = 0
-
-        AUAudioUnit.registerSubclass(
-            AKCostelloReverbAudioUnit.self,
-            asComponentDescription: description,
-            name: "Local AKCostelloReverb",
-            version: UInt32.max)
+        _Self.register()
 
         super.init()
-        AVAudioUnit.instantiateWithComponentDescription(description, options: []) {
-            avAudioUnit, error in
+        AVAudioUnit._instantiate(with: _Self.ComponentDescription) { [weak self] avAudioUnit in
 
-            guard let avAudioUnitEffect = avAudioUnit else { return }
+            self?.avAudioNode = avAudioUnit
+            self?.internalAU = avAudioUnit.auAudioUnit as? AKAudioUnitType
 
-            self.avAudioNode = avAudioUnitEffect
-            self.internalAU = avAudioUnitEffect.AUAudioUnit as? AKCostelloReverbAudioUnit
-
-            AudioKit.engine.attachNode(self.avAudioNode)
-            input.addConnectionPoint(self)
+            input?.addConnectionPoint(self!)
         }
 
-        guard let tree = internalAU?.parameterTree else { return }
+        guard let tree = internalAU?.parameterTree else {
+            return
+        }
 
-        feedbackParameter        = tree.valueForKey("feedback")        as? AUParameter
-        cutoffFrequencyParameter = tree.valueForKey("cutoffFrequency") as? AUParameter
+        feedbackParameter = tree["feedback"]
+        cutoffFrequencyParameter = tree["cutoffFrequency"]
 
-        token = tree.tokenByAddingParameterObserver {
-            address, value in
+        token = tree.token (byAddingParameterObserver: { [weak self] address, value in
 
-            dispatch_async(dispatch_get_main_queue()) {
-                if address == self.feedbackParameter!.address {
-                    self.feedback = Double(value)
-                } else if address == self.cutoffFrequencyParameter!.address {
-                    self.cutoffFrequency = Double(value)
+            DispatchQueue.main.async {
+                if address == self?.feedbackParameter?.address {
+                    self?.feedback = Double(value)
+                } else if address == self?.cutoffFrequencyParameter?.address {
+                    self?.cutoffFrequency = Double(value)
                 }
             }
-        }
-        feedbackParameter?.setValue(Float(feedback), originator: token!)
-        cutoffFrequencyParameter?.setValue(Float(cutoffFrequency), originator: token!)
+        })
+
+        internalAU?.feedback = Float(feedback)
+        internalAU?.cutoffFrequency = Float(cutoffFrequency)
     }
-    
+
     // MARK: - Control
 
     /// Function to start, play, or activate the node, all do the same thing
-    public func start() {
-        self.internalAU!.start()
+    open func start() {
+        internalAU?.start()
     }
 
     /// Function to stop or bypass the node, both are equivalent
-    public func stop() {
-        self.internalAU!.stop()
+    open func stop() {
+        internalAU?.stop()
     }
 }

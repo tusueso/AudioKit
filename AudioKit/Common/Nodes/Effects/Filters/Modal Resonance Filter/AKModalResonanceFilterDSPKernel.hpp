@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKModalResonanceFilterDSPKernel_hpp
-#define AKModalResonanceFilterDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -23,24 +22,26 @@ enum {
     qualityFactorAddress = 1
 };
 
-class AKModalResonanceFilterDSPKernel : public AKDSPKernel {
+class AKModalResonanceFilterDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKModalResonanceFilterDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
+        sp_mode_create(&mode0);
+        sp_mode_create(&mode1);
+        sp_mode_init(sp, mode0);
+        sp_mode_init(sp, mode1);
+        mode0->freq = 500.0;
+        mode1->freq = 500.0;
+        mode0->q = 50.0;
+        mode1->q = 50.0;
 
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_mode_create(&mode);
-        sp_mode_init(sp, mode);
-        mode->freq = 500.0;
-        mode->q = 50.0;
+        frequencyRamper.init();
+        qualityFactorRamper.init();
     }
 
     void start() {
@@ -52,21 +53,36 @@ public:
     }
 
     void destroy() {
-        sp_mode_destroy(&mode);
-        sp_destroy(&sp);
+        sp_mode_destroy(&mode0);
+        sp_mode_destroy(&mode1);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        frequencyRamper.reset();
+        qualityFactorRamper.reset();
     }
+
+    void setFrequency(float value) {
+        frequency = clamp(value, 12.0f, 20000.0f);
+        frequencyRamper.setImmediate(frequency);
+    }
+
+    void setQualityFactor(float value) {
+        qualityFactor = clamp(value, 0.0f, 100.0f);
+        qualityFactorRamper.setImmediate(qualityFactor);
+    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case frequencyAddress:
-                frequencyRamper.set(clamp(value, (float)12.0, (float)20000.0));
+                frequencyRamper.setUIValue(clamp(value, 12.0f, 20000.0f));
                 break;
 
             case qualityFactorAddress:
-                qualityFactorRamper.set(clamp(value, (float)0.0, (float)100.0));
+                qualityFactorRamper.setUIValue(clamp(value, 0.0f, 100.0f));
                 break;
 
         }
@@ -75,10 +91,10 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case frequencyAddress:
-                return frequencyRamper.goal();
+                return frequencyRamper.getUIValue();
 
             case qualityFactorAddress:
-                return qualityFactorRamper.goal();
+                return qualityFactorRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -87,42 +103,42 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case frequencyAddress:
-                frequencyRamper.startRamp(clamp(value, (float)12.0, (float)20000.0), duration);
+                frequencyRamper.startRamp(clamp(value, 12.0f, 20000.0f), duration);
                 break;
 
             case qualityFactorAddress:
-                qualityFactorRamper.startRamp(clamp(value, (float)0.0, (float)100.0), duration);
+                qualityFactorRamper.startRamp(clamp(value, 0.0f, 100.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
-            double frequency = double(frequencyRamper.getStep());
-            double qualityFactor = double(qualityFactorRamper.getStep());
 
             int frameOffset = int(frameIndex + bufferOffset);
 
-            mode->freq = (float)frequency;
-            mode->q = (float)qualityFactor;
+            frequency = frequencyRamper.getAndStep();
+            mode0->freq = (float)frequency;
+            mode1->freq = (float)frequency;
+            qualityFactor = qualityFactorRamper.getAndStep();
+            mode0->q = (float)qualityFactor;
+            mode1->q = (float)qualityFactor;
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
 
-                sp_mode_compute(sp, mode, in, out);
+                if (started) {
+                    if (channel == 0) {
+                        sp_mode_compute(sp, mode0, in, out);
+                    } else {
+                        sp_mode_compute(sp, mode1, in, out);
+                    }
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -131,19 +147,15 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
+    sp_mode *mode0;
+    sp_mode *mode1;
 
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
-    sp_mode *mode;
+    float frequency = 500.0;
+    float qualityFactor = 50.0;
 
 public:
     bool started = true;
-    AKParameterRamper frequencyRamper = 500.0;
-    AKParameterRamper qualityFactorRamper = 50.0;
+    bool resetted = false;
+    ParameterRamper frequencyRamper = 500.0;
+    ParameterRamper qualityFactorRamper = 50.0;
 };
-
-#endif /* AKModalResonanceFilterDSPKernel_hpp */

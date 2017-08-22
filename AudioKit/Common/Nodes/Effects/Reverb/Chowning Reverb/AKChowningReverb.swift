@@ -3,10 +3,8 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
-
-import AVFoundation
 
 /// This is was built using the JC reverb implentation found in FAUST. According
 /// to the source code, the specifications for this implementation were found on
@@ -16,68 +14,48 @@ import AVFoundation
 /// three series allpass units, followed by four parallel comb filters, and two
 /// decorrelation delay lines in parallel at the output.
 ///
-/// - parameter input: Input node to process
-///
-public class AKChowningReverb: AKNode, AKToggleable {
+open class AKChowningReverb: AKNode, AKToggleable, AKComponent {
+    public typealias AKAudioUnitType = AKChowningReverbAudioUnit
+    /// Four letter unique description of the node
+    public static let ComponentDescription = AudioComponentDescription(effect: "jcrv")
 
     // MARK: - Properties
-
-
-    internal var internalAU: AKChowningReverbAudioUnit?
-    internal var token: AUParameterObserverToken?
-
-
+    private var internalAU: AKAudioUnitType?
+    private var token: AUParameterObserverToken?
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    public var isStarted: Bool {
-        return internalAU!.isPlaying()
+    open dynamic var isStarted: Bool {
+        return internalAU?.isPlaying() ?? false
     }
-    
+
     // MARK: - Initialization
 
     /// Initialize this reverb node
     ///
     /// - parameter input: Input node to process
     ///
-    public init(_ input: AKNode) {
-
-
-        var description = AudioComponentDescription()
-        description.componentType         = kAudioUnitType_Effect
-        description.componentSubType      = 0x6a637276 /*'jcrv'*/
-        description.componentManufacturer = 0x41754b74 /*'AuKt'*/
-        description.componentFlags        = 0
-        description.componentFlagsMask    = 0
-
-        AUAudioUnit.registerSubclass(
-            AKChowningReverbAudioUnit.self,
-            asComponentDescription: description,
-            name: "Local AKChowningReverb",
-            version: UInt32.max)
+    public init(_ input: AKNode?) {
+        _Self.register()
 
         super.init()
-        AVAudioUnit.instantiateWithComponentDescription(description, options: []) {
-            avAudioUnit, error in
+        AVAudioUnit._instantiate(with: _Self.ComponentDescription) { [weak self] avAudioUnit in
 
-            guard let avAudioUnitEffect = avAudioUnit else { return }
+            self?.avAudioNode = avAudioUnit
+            self?.internalAU = avAudioUnit.auAudioUnit as? AKAudioUnitType
 
-            self.avAudioNode = avAudioUnitEffect
-            self.internalAU = avAudioUnitEffect.AUAudioUnit as? AKChowningReverbAudioUnit
-
-            AudioKit.engine.attachNode(self.avAudioNode)
-            input.addConnectionPoint(self)
+            input?.addConnectionPoint(self!)
         }
     }
-    
+
     // MARK: - Control
 
     /// Function to start, play, or activate the node, all do the same thing
-    public func start() {
-        self.internalAU!.start()
+    open func start() {
+        internalAU?.start()
     }
 
     /// Function to stop or bypass the node, both are equivalent
-    public func stop() {
-        self.internalAU!.stop()
+    open func stop() {
+        internalAU?.stop()
     }
 }

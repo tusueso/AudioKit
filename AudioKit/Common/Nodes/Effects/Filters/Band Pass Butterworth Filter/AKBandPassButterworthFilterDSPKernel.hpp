@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKBandPassButterworthFilterDSPKernel_hpp
-#define AKBandPassButterworthFilterDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -23,24 +22,26 @@ enum {
     bandwidthAddress = 1
 };
 
-class AKBandPassButterworthFilterDSPKernel : public AKDSPKernel {
+class AKBandPassButterworthFilterDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKBandPassButterworthFilterDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
+        sp_butbp_create(&butbp0);
+        sp_butbp_create(&butbp1);
+        sp_butbp_init(sp, butbp0);
+        sp_butbp_init(sp, butbp1);
+        butbp0->freq = 2000.0;
+        butbp1->freq = 2000.0;
+        butbp0->bw = 100.0;
+        butbp1->bw = 100.0;
 
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_butbp_create(&butbp);
-        sp_butbp_init(sp, butbp);
-        butbp->freq = 2000;
-        butbp->bw = 100;
+        centerFrequencyRamper.init();
+        bandwidthRamper.init();
     }
 
     void start() {
@@ -52,21 +53,36 @@ public:
     }
 
     void destroy() {
-        sp_butbp_destroy(&butbp);
-        sp_destroy(&sp);
+        sp_butbp_destroy(&butbp0);
+        sp_butbp_destroy(&butbp1);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        centerFrequencyRamper.reset();
+        bandwidthRamper.reset();
     }
+
+    void setCenterFrequency(float value) {
+        centerFrequency = clamp(value, 12.0f, 20000.0f);
+        centerFrequencyRamper.setImmediate(centerFrequency);
+    }
+
+    void setBandwidth(float value) {
+        bandwidth = clamp(value, 0.0f, 20000.0f);
+        bandwidthRamper.setImmediate(bandwidth);
+    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case centerFrequencyAddress:
-                centerFrequencyRamper.set(clamp(value, (float)12.0, (float)20000.0));
+                centerFrequencyRamper.setUIValue(clamp(value, 12.0f, 20000.0f));
                 break;
 
             case bandwidthAddress:
-                bandwidthRamper.set(clamp(value, (float)0.0, (float)20000.0));
+                bandwidthRamper.setUIValue(clamp(value, 0.0f, 20000.0f));
                 break;
 
         }
@@ -75,10 +91,10 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case centerFrequencyAddress:
-                return centerFrequencyRamper.goal();
+                return centerFrequencyRamper.getUIValue();
 
             case bandwidthAddress:
-                return bandwidthRamper.goal();
+                return bandwidthRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -87,42 +103,42 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case centerFrequencyAddress:
-                centerFrequencyRamper.startRamp(clamp(value, (float)12.0, (float)20000.0), duration);
+                centerFrequencyRamper.startRamp(clamp(value, 12.0f, 20000.0f), duration);
                 break;
 
             case bandwidthAddress:
-                bandwidthRamper.startRamp(clamp(value, (float)0.0, (float)20000.0), duration);
+                bandwidthRamper.startRamp(clamp(value, 0.0f, 20000.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
-            double centerFrequency = double(centerFrequencyRamper.getStep());
-            double bandwidth = double(bandwidthRamper.getStep());
 
             int frameOffset = int(frameIndex + bufferOffset);
 
-            butbp->freq = (float)centerFrequency;
-            butbp->bw = (float)bandwidth;
+            centerFrequency = centerFrequencyRamper.getAndStep();
+            butbp0->freq = (float)centerFrequency;
+            butbp1->freq = (float)centerFrequency;
+            bandwidth = bandwidthRamper.getAndStep();
+            butbp0->bw = (float)bandwidth;
+            butbp1->bw = (float)bandwidth;
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
 
-                sp_butbp_compute(sp, butbp, in, out);
+                if (started) {
+                    if (channel == 0) {
+                        sp_butbp_compute(sp, butbp0, in, out);
+                    } else {
+                        sp_butbp_compute(sp, butbp1, in, out);
+                    }
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -131,19 +147,15 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
+    sp_butbp *butbp0;
+    sp_butbp *butbp1;
 
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
-    sp_butbp *butbp;
+    float centerFrequency = 2000.0;
+    float bandwidth = 100.0;
 
 public:
     bool started = true;
-    AKParameterRamper centerFrequencyRamper = 2000;
-    AKParameterRamper bandwidthRamper = 100;
+    bool resetted = false;
+    ParameterRamper centerFrequencyRamper = 2000.0;
+    ParameterRamper bandwidthRamper = 100.0;
 };
-
-#endif /* AKBandPassButterworthFilterDSPKernel_hpp */

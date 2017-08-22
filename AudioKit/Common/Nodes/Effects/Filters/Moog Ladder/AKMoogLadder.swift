@@ -3,10 +3,8 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
-
-import AVFoundation
 
 /// Moog Ladder is an new digital implementation of the Moog ladder filter based
 /// on the work of Antti Huovilainen, described in the paper "Non-Linear Digital
@@ -14,124 +12,122 @@ import AVFoundation
 /// Napoli). This implementation is probably a more accurate digital
 /// representation of the original analogue filter.
 ///
-/// - parameter input: Input node to process
-/// - parameter cutoffFrequency: Filter cutoff frequency.
-/// - parameter resonance: Resonance, generally < 1, but not limited to it. Higher than 1 resonance values might cause aliasing, analogue synths generally allow resonances to be above 1.
-///
-public class AKMoogLadder: AKNode, AKToggleable {
+open class AKMoogLadder: AKNode, AKToggleable, AKComponent {
+    public typealias AKAudioUnitType = AKMoogLadderAudioUnit
+    /// Four letter unique description of the node
+    public static let ComponentDescription = AudioComponentDescription(effect: "mgld")
 
     // MARK: - Properties
 
+    private var internalAU: AKAudioUnitType?
+    private var token: AUParameterObserverToken?
 
-    internal var internalAU: AKMoogLadderAudioUnit?
-    internal var token: AUParameterObserverToken?
+    fileprivate var cutoffFrequencyParameter: AUParameter?
+    fileprivate var resonanceParameter: AUParameter?
 
-    private var cutoffFrequencyParameter: AUParameter?
-    private var resonanceParameter: AUParameter?
-    
-    /// Inertia represents the speed at which parameters are allowed to change
-    public var inertia: Double = 0.0002 {
-        willSet(newValue){
-            if(inertia != newValue){
-                internalAU?.inertia = newValue
-                internalAU?.setUpParameterRamp()
-            }
+    /// Ramp Time represents the speed at which parameters are allowed to change
+    open dynamic var rampTime: Double = AKSettings.rampTime {
+        willSet {
+            internalAU?.rampTime = newValue
         }
     }
-    
+
     /// Filter cutoff frequency.
-    public var cutoffFrequency: Double = 1000 {
-        willSet(newValue) {
+    open dynamic var cutoffFrequency: Double = 1_000 {
+        willSet {
             if cutoffFrequency != newValue {
-                cutoffFrequencyParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        cutoffFrequencyParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.cutoffFrequency = Float(newValue)
+                }
             }
         }
     }
-    /// Resonance, generally < 1, but not limited to it. Higher than 1 resonance values might cause aliasing, analogue synths generally allow resonances to be above 1.
-    public var resonance: Double = 0.5 {
-        willSet(newValue) {
+    /// Resonance, generally < 1, but not limited to it. Higher than 1 resonance values might cause aliasing,
+    /// analogue synths generally allow resonances to be above 1.
+    open dynamic var resonance: Double = 0.5 {
+        willSet {
             if resonance != newValue {
-                resonanceParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        resonanceParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.resonance = Float(newValue)
+                }
             }
         }
     }
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    public var isStarted: Bool {
-        return internalAU!.isPlaying()
+    open dynamic var isStarted: Bool {
+        return internalAU?.isPlaying() ?? false
     }
 
     // MARK: - Initialization
 
     /// Initialize this filter node
     ///
-    /// - parameter input: Input node to process
-    /// - parameter cutoffFrequency: Filter cutoff frequency.
-    /// - parameter resonance: Resonance, generally < 1, but not limited to it. Higher than 1 resonance values might cause aliasing, analogue synths generally allow resonances to be above 1.
+    /// - Parameters:
+    ///   - input: Input node to process
+    ///   - cutoffFrequency: Filter cutoff frequency.
+    ///   - resonance: Resonance, generally < 1, but not limited to it.
+    ///                Higher than 1 resonance values might cause aliasing,
+    ///                analogue synths generally allow resonances to be above 1.
     ///
     public init(
-        _ input: AKNode,
-        cutoffFrequency: Double = 1000,
+        _ input: AKNode?,
+        cutoffFrequency: Double = 1_000,
         resonance: Double = 0.5) {
 
         self.cutoffFrequency = cutoffFrequency
         self.resonance = resonance
 
-        var description = AudioComponentDescription()
-        description.componentType         = kAudioUnitType_Effect
-        description.componentSubType      = 0x6d676c64 /*'mgld'*/
-        description.componentManufacturer = 0x41754b74 /*'AuKt'*/
-        description.componentFlags        = 0
-        description.componentFlagsMask    = 0
-
-        AUAudioUnit.registerSubclass(
-            AKMoogLadderAudioUnit.self,
-            asComponentDescription: description,
-            name: "Local AKMoogLadder",
-            version: UInt32.max)
+        _Self.register()
 
         super.init()
-        AVAudioUnit.instantiateWithComponentDescription(description, options: []) {
-            avAudioUnit, error in
+        AVAudioUnit._instantiate(with: _Self.ComponentDescription) { [weak self] avAudioUnit in
 
-            guard let avAudioUnitEffect = avAudioUnit else { return }
+            self?.avAudioNode = avAudioUnit
+            self?.internalAU = avAudioUnit.auAudioUnit as? AKAudioUnitType
 
-            self.avAudioNode = avAudioUnitEffect
-            self.internalAU = avAudioUnitEffect.AUAudioUnit as? AKMoogLadderAudioUnit
-
-            AudioKit.engine.attachNode(self.avAudioNode)
-            input.addConnectionPoint(self)
+            input?.addConnectionPoint(self!)
         }
 
-        guard let tree = internalAU?.parameterTree else { return }
+        guard let tree = internalAU?.parameterTree else {
+            return
+        }
 
-        cutoffFrequencyParameter = tree.valueForKey("cutoffFrequency") as? AUParameter
-        resonanceParameter       = tree.valueForKey("resonance")       as? AUParameter
+        cutoffFrequencyParameter = tree["cutoffFrequency"]
+        resonanceParameter = tree["resonance"]
 
-        token = tree.tokenByAddingParameterObserver {
-            address, value in
+        token = tree.token (byAddingParameterObserver: { [weak self] address, value in
 
-            dispatch_async(dispatch_get_main_queue()) {
-                if address == self.cutoffFrequencyParameter!.address {
-                    self.cutoffFrequency = Double(value)
-                } else if address == self.resonanceParameter!.address {
-                    self.resonance = Double(value)
+            DispatchQueue.main.async {
+                if address == self?.cutoffFrequencyParameter?.address {
+                    self?.cutoffFrequency = Double(value)
+                } else if address == self?.resonanceParameter?.address {
+                    self?.resonance = Double(value)
                 }
             }
-        }
-        cutoffFrequencyParameter?.setValue(Float(cutoffFrequency), originator: token!)
-        resonanceParameter?.setValue(Float(resonance), originator: token!)
+        })
+
+        internalAU?.cutoffFrequency = Float(cutoffFrequency)
+        internalAU?.resonance = Float(resonance)
     }
-    
+
     // MARK: - Control
 
     /// Function to start, play, or activate the node, all do the same thing
-    public func start() {
-        self.internalAU!.start()
+    open func start() {
+        internalAU?.start()
     }
 
     /// Function to stop or bypass the node, both are equivalent
-    public func stop() {
-        self.internalAU!.stop()
+    open func stop() {
+        internalAU?.stop()
     }
 }

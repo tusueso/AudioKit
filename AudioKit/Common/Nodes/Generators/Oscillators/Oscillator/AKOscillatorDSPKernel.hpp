@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKOscillatorDSPKernel_hpp
-#define AKOscillatorDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -25,20 +24,15 @@ enum {
     detuningMultiplierAddress = 3
 };
 
-class AKOscillatorDSPKernel : public AKDSPKernel {
+class AKOscillatorDSPKernel : public AKSoundpipeKernel, public AKOutputBuffered {
 public:
     // MARK: Member Functions
 
     AKOscillatorDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
-
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
         sp_osc_create(&osc);
         sp_osc_init(sp, osc, ftbl, 0);
         osc->freq = 440;
@@ -64,49 +58,50 @@ public:
 
     void destroy() {
         sp_osc_destroy(&osc);
-        sp_destroy(&sp);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
     }
 
-    void setFrequency(float freq) {
-        frequency = freq;
-        frequencyRamper.set(clamp(freq, (float)0, (float)20000));
+    void setFrequency(float value) {
+        frequency = clamp(value, (float)0, (float)20000);
+        frequencyRamper.setImmediate(frequency);
     }
 
-    void setAmplitude(float amp) {
-        amplitude = amp;
-        amplitudeRamper.set(clamp(amp, (float)0, (float)10));
+    void setAmplitude(float value) {
+        amplitude = clamp(value, (float)0, (float)10);
+        amplitudeRamper.setImmediate(amplitude);
     }
 
-    void setDetuningOffset(float detuneOffset) {
-        detuningOffset = detuneOffset;
-        detuningOffsetRamper.set(clamp(detuneOffset, (float)-1000, (float)1000));
+    void setDetuningOffset(float value) {
+        detuningOffset = clamp(value, (float)-1000, (float)1000);
+        detuningOffsetRamper.setImmediate(detuningOffset);
     }
 
-    void setDetuningMultiplier(float detuneScale) {
-        detuningMultiplier = detuneScale;
-        detuningMultiplierRamper.set(clamp(detuneScale, (float)0.9, (float)1.11));
+    void setDetuningMultiplier(float value) {
+        detuningMultiplier = value;
+        detuningMultiplierRamper.setImmediate(detuningMultiplier);
     }
 
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case frequencyAddress:
-                frequencyRamper.set(clamp(value, (float)0, (float)20000));
+                frequencyRamper.setUIValue(clamp(value, (float)0, (float)20000));
                 break;
 
             case amplitudeAddress:
-                amplitudeRamper.set(clamp(value, (float)0, (float)10));
+                amplitudeRamper.setUIValue(clamp(value, (float)0, (float)10));
                 break;
 
             case detuningOffsetAddress:
-                detuningOffsetRamper.set(clamp(value, (float)-1000, (float)1000));
+                detuningOffsetRamper.setUIValue(clamp(value, (float)-1000, (float)1000));
                 break;
 
             case detuningMultiplierAddress:
-                detuningMultiplierRamper.set(clamp(value, (float)0.9, (float)1.11));
+                detuningMultiplierRamper.setUIValue(value);
                 break;
 
         }
@@ -115,16 +110,16 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case frequencyAddress:
-                return frequencyRamper.goal();
+                return frequencyRamper.getUIValue();
 
             case amplitudeAddress:
-                return amplitudeRamper.goal();
+                return amplitudeRamper.getUIValue();
 
             case detuningOffsetAddress:
-                return detuningOffsetRamper.goal();
+                return detuningOffsetRamper.getUIValue();
 
             case detuningMultiplierAddress:
-                return detuningMultiplierRamper.goal();
+                return detuningMultiplierRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -145,25 +140,21 @@ public:
                 break;
 
             case detuningMultiplierAddress:
-                detuningMultiplierRamper.startRamp(clamp(value, (float)0.9, (float)1.11), duration);
+                detuningMultiplierRamper.startRamp(value, duration);
                 break;
 
         }
     }
 
-    void setBuffer(AudioBufferList *outBufferList) {
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
             int frameOffset = int(frameIndex + bufferOffset);
 
-            frequency = double(frequencyRamper.getStep());
-            amplitude = double(amplitudeRamper.getStep());
-            detuningOffset = double(detuningOffsetRamper.getStep());
-            detuningMultiplier = double(detuningMultiplierRamper.getStep());
+            frequency = double(frequencyRamper.getAndStep());
+            amplitude = double(amplitudeRamper.getAndStep());
+            detuningOffset = double(detuningOffsetRamper.getAndStep());
+            detuningMultiplier = double(detuningMultiplierRamper.getAndStep());
 
             osc->freq = frequency * detuningMultiplier + detuningOffset;
             osc->amp = amplitude;
@@ -187,12 +178,6 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
-
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
     sp_osc *osc;
 
     sp_ftbl *ftbl;
@@ -205,10 +190,10 @@ private:
 
 public:
     bool started = false;
-    AKParameterRamper frequencyRamper = 440;
-    AKParameterRamper amplitudeRamper = 1;
-    AKParameterRamper detuningOffsetRamper = 0;
-    AKParameterRamper detuningMultiplierRamper = 1;
+    bool resetted = false;
+    ParameterRamper frequencyRamper = 440;
+    ParameterRamper amplitudeRamper = 1;
+    ParameterRamper detuningOffsetRamper = 0;
+    ParameterRamper detuningMultiplierRamper = 1;
 };
 
-#endif /* AKOscillatorDSPKernel_hpp */

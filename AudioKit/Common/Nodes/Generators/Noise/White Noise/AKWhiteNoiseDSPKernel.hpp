@@ -3,14 +3,12 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKWhiteNoiseDSPKernel_hpp
-#define AKWhiteNoiseDSPKernel_hpp
-
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#pragma once
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -22,23 +20,20 @@ enum {
     amplitudeAddress = 0
 };
 
-class AKWhiteNoiseDSPKernel : public AKDSPKernel {
+class AKWhiteNoiseDSPKernel : public AKSoundpipeKernel, public AKOutputBuffered {
 public:
     // MARK: Member Functions
 
     AKWhiteNoiseDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
-
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
         sp_noise_create(&noise);
         sp_noise_init(sp, noise);
         noise->amp = 1;
+
+        amplitudeRamper.init();
     }
 
     void start() {
@@ -51,21 +46,24 @@ public:
 
     void destroy() {
         sp_noise_destroy(&noise);
-        sp_destroy(&sp);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        amplitudeRamper.reset();
     }
-    
-    void setAmplitude(float amp) {
-        amplitude = amp;
-        amplitudeRamper.set(clamp(amp, (float)0, (float)10));
+
+    void setAmplitude(float value) {
+        amplitude = clamp(value, 0.0f, 1.0f);
+        amplitudeRamper.setImmediate(amplitude);
     }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case amplitudeAddress:
-                amplitudeRamper.set(clamp(value, (float)0, (float)1));
+                amplitudeRamper.setUIValue(clamp(value, 0.0f, 1.0f));
                 break;
 
         }
@@ -74,7 +72,7 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case amplitudeAddress:
-                return amplitudeRamper.goal();
+                return amplitudeRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -83,23 +81,19 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case amplitudeAddress:
-                amplitudeRamper.startRamp(clamp(value, (float)0, (float)1), duration);
+                amplitudeRamper.startRamp(clamp(value, 0.0f, 1.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffer(AudioBufferList *outBufferList) {
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
-            double amplitude = double(amplitudeRamper.getStep());
 
             int frameOffset = int(frameIndex + bufferOffset);
 
+            amplitude = amplitudeRamper.getAndStep();
             noise->amp = (float)amplitude;
 
             float temp = 0;
@@ -121,19 +115,14 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
-
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
     sp_noise *noise;
-    
+
     float amplitude = 1;
 
 public:
     bool started = false;
-    AKParameterRamper amplitudeRamper = 1;
+    bool resetted = false;
+    ParameterRamper amplitudeRamper = 1;
 };
 
-#endif /* AKWhiteNoiseDSPKernel_hpp */
+

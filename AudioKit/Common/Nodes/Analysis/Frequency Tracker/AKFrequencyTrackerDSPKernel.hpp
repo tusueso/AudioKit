@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2015 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKFrequencyTrackerDSPKernel_hpp
-#define AKFrequencyTrackerDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -19,22 +18,16 @@ extern "C" {
 }
 
 
-class AKFrequencyTrackerDSPKernel : public AKDSPKernel {
+class AKFrequencyTrackerDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKFrequencyTrackerDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
-
-        sampleRate = float(inSampleRate);
-
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_pitchamdf_create(&pitchamdf);
-        sp_pitchamdf_init(sp, pitchamdf, minimumFrequency, maximumFrequency);
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
+        sp_ptrack_create(&ptrack);
+        sp_ptrack_init(sp, ptrack, hopSize, peakCount);
     }
     
     void start() {
@@ -46,17 +39,13 @@ public:
     }
 
     void destroy() {
-        sp_pitchamdf_destroy(&pitchamdf);
-        sp_destroy(&sp);
+        sp_ptrack_destroy(&ptrack);
+        AKSoundpipeKernel::destroy();
     }
     
     void reset() {
     }
-    
-    void setFrequencyLimits(float min, float max) {
-        minimumFrequency = min;
-        maximumFrequency = max;
-    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
@@ -74,13 +63,8 @@ public:
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
 
             int frameOffset = int(frameIndex + bufferOffset);
@@ -91,7 +75,7 @@ public:
                 float temp = *in;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
                 if (started) {
-                    sp_pitchamdf_compute(sp, pitchamdf, in, &trackedFrequency, &trackedAmplitude);
+                    sp_ptrack_compute(sp, ptrack, in, &trackedFrequency, &trackedAmplitude);
                 } else {
                     trackedAmplitude = 0;
                     trackedFrequency = 0;
@@ -104,23 +88,15 @@ public:
     // MARK: Member Variables
 
 private:
-
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
     
-    float minimumFrequency = 20;
-    float maximumFrequency = 4000;
+    int hopSize = 4096;
+    int peakCount = 20;
 
-    AudioBufferList* inBufferListPtr = nullptr;
-    AudioBufferList* outBufferListPtr = nullptr;
+    sp_ptrack *ptrack = nullptr;
 
-    sp_data *sp;
-    sp_pitchamdf *pitchamdf;
-    
 public:
     float trackedAmplitude = 0.0;
     float trackedFrequency = 0.0;
     bool started = true;
 };
 
-#endif /* AKFrequencyTrackerDSPKernel_hpp */

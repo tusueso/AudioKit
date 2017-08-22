@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKThreePoleLowpassFilterDSPKernel_hpp
-#define AKThreePoleLowpassFilterDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -24,25 +23,29 @@ enum {
     resonanceAddress = 2
 };
 
-class AKThreePoleLowpassFilterDSPKernel : public AKDSPKernel {
+class AKThreePoleLowpassFilterDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKThreePoleLowpassFilterDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
+        sp_lpf18_create(&lpf180);
+        sp_lpf18_create(&lpf181);
+        sp_lpf18_init(sp, lpf180);
+        sp_lpf18_init(sp, lpf181);
+        lpf180->dist = 0.5;
+        lpf181->dist = 0.5;
+        lpf180->cutoff = 1500;
+        lpf181->cutoff = 1500;
+        lpf180->res = 0.5;
+        lpf181->res = 0.5;
 
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_lpf18_create(&lpf18);
-        sp_lpf18_init(sp, lpf18);
-        lpf18->dist = 0.5;
-        lpf18->cutoff = 1500;
-        lpf18->res = 0.5;
+        distortionRamper.init();
+        cutoffFrequencyRamper.init();
+        resonanceRamper.init();
     }
 
     void start() {
@@ -54,25 +57,46 @@ public:
     }
 
     void destroy() {
-        sp_lpf18_destroy(&lpf18);
-        sp_destroy(&sp);
+        sp_lpf18_destroy(&lpf180);
+        sp_lpf18_destroy(&lpf181);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        distortionRamper.reset();
+        cutoffFrequencyRamper.reset();
+        resonanceRamper.reset();
     }
+
+    void setDistortion(float value) {
+        distortion = clamp(value, 0.0f, 2.0f);
+        distortionRamper.setImmediate(distortion);
+    }
+
+    void setCutoffFrequency(float value) {
+        cutoffFrequency = clamp(value, 12.0f, 20000.0f);
+        cutoffFrequencyRamper.setImmediate(cutoffFrequency);
+    }
+
+    void setResonance(float value) {
+        resonance = clamp(value, 0.0f, 2.0f);
+        resonanceRamper.setImmediate(resonance);
+    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case distortionAddress:
-                distortionRamper.set(clamp(value, (float)0.0, (float)2.0));
+                distortionRamper.setUIValue(clamp(value, 0.0f, 2.0f));
                 break;
 
             case cutoffFrequencyAddress:
-                cutoffFrequencyRamper.set(clamp(value, (float)12.0, (float)20000.0));
+                cutoffFrequencyRamper.setUIValue(clamp(value, 12.0f, 20000.0f));
                 break;
 
             case resonanceAddress:
-                resonanceRamper.set(clamp(value, (float)0.0, (float)2.0));
+                resonanceRamper.setUIValue(clamp(value, 0.0f, 2.0f));
                 break;
 
         }
@@ -81,13 +105,13 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case distortionAddress:
-                return distortionRamper.goal();
+                return distortionRamper.getUIValue();
 
             case cutoffFrequencyAddress:
-                return cutoffFrequencyRamper.goal();
+                return cutoffFrequencyRamper.getUIValue();
 
             case resonanceAddress:
-                return resonanceRamper.goal();
+                return resonanceRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -96,48 +120,49 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case distortionAddress:
-                distortionRamper.startRamp(clamp(value, (float)0.0, (float)2.0), duration);
+                distortionRamper.startRamp(clamp(value, 0.0f, 2.0f), duration);
                 break;
 
             case cutoffFrequencyAddress:
-                cutoffFrequencyRamper.startRamp(clamp(value, (float)12.0, (float)20000.0), duration);
+                cutoffFrequencyRamper.startRamp(clamp(value, 12.0f, 20000.0f), duration);
                 break;
 
             case resonanceAddress:
-                resonanceRamper.startRamp(clamp(value, (float)0.0, (float)2.0), duration);
+                resonanceRamper.startRamp(clamp(value, 0.0f, 2.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
-            double distortion = double(distortionRamper.getStep());
-            double cutoffFrequency = double(cutoffFrequencyRamper.getStep());
-            double resonance = double(resonanceRamper.getStep());
 
             int frameOffset = int(frameIndex + bufferOffset);
 
-            lpf18->dist = (float)distortion;
-            lpf18->cutoff = (float)cutoffFrequency;
-            lpf18->res = (float)resonance;
+            distortion = distortionRamper.getAndStep();
+            lpf180->dist = (float)distortion;
+            lpf181->dist = (float)distortion;
+            cutoffFrequency = cutoffFrequencyRamper.getAndStep();
+            lpf180->cutoff = (float)cutoffFrequency;
+            lpf181->cutoff = (float)cutoffFrequency;
+            resonance = resonanceRamper.getAndStep();
+            lpf180->res = (float)resonance;
+            lpf181->res = (float)resonance;
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
 
-                sp_lpf18_compute(sp, lpf18, in, out);
+                if (started) {
+                    if (channel == 0) {
+                        sp_lpf18_compute(sp, lpf180, in, out);
+                    } else {
+                        sp_lpf18_compute(sp, lpf181, in, out);
+                    }
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -146,20 +171,17 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
+    sp_lpf18 *lpf180;
+    sp_lpf18 *lpf181;
 
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
-    sp_lpf18 *lpf18;
+    float distortion = 0.5;
+    float cutoffFrequency = 1500;
+    float resonance = 0.5;
 
 public:
     bool started = true;
-    AKParameterRamper distortionRamper = 0.5;
-    AKParameterRamper cutoffFrequencyRamper = 1500;
-    AKParameterRamper resonanceRamper = 0.5;
+    bool resetted = false;
+    ParameterRamper distortionRamper = 0.5;
+    ParameterRamper cutoffFrequencyRamper = 1500;
+    ParameterRamper resonanceRamper = 0.5;
 };
-
-#endif /* AKThreePoleLowpassFilterDSPKernel_hpp */

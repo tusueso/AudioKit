@@ -3,72 +3,93 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
-
-import AVFoundation
 
 /// This is an implementation of Zoelzer's parametric equalizer filter.
 ///
-/// - parameter input: Input node to process
-/// - parameter centerFrequency: Corner frequency.
-/// - parameter gain: Amount at which the corner frequency value shall be increased or decreased. A value of 1 is a flat response.
-/// - parameter q: Q of the filter. sqrt(0.5) is no resonance.
-///
-public class AKHighShelfParametricEqualizerFilter: AKNode, AKToggleable {
+open class AKHighShelfParametricEqualizerFilter: AKNode, AKToggleable, AKComponent {
+    public typealias AKAudioUnitType = AKHighShelfParametricEqualizerFilterAudioUnit
+    /// Four letter unique description of the node
+    public static let ComponentDescription = AudioComponentDescription(effect: "peq2")
 
     // MARK: - Properties
 
+    private var internalAU: AKAudioUnitType?
+    private var token: AUParameterObserverToken?
 
-    internal var internalAU: AKHighShelfParametricEqualizerFilterAudioUnit?
-    internal var token: AUParameterObserverToken?
+    fileprivate var centerFrequencyParameter: AUParameter?
+    fileprivate var gainParameter: AUParameter?
+    fileprivate var qParameter: AUParameter?
 
-    private var centerFrequencyParameter: AUParameter?
-    private var gainParameter: AUParameter?
-    private var qParameter: AUParameter?
+    /// Ramp Time represents the speed at which parameters are allowed to change
+    open dynamic var rampTime: Double = AKSettings.rampTime {
+        willSet {
+            internalAU?.rampTime = newValue
+        }
+    }
 
     /// Corner frequency.
-    public var centerFrequency: Double = 1000 {
-        willSet(newValue) {
+    open dynamic var centerFrequency: Double = 1_000 {
+        willSet {
             if centerFrequency != newValue {
-                centerFrequencyParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        centerFrequencyParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.centerFrequency = Float(newValue)
+                }
             }
         }
     }
     /// Amount at which the corner frequency value shall be increased or decreased. A value of 1 is a flat response.
-    public var gain: Double = 1.0 {
-        willSet(newValue) {
+    open dynamic var gain: Double = 1.0 {
+        willSet {
             if gain != newValue {
-                gainParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        gainParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.gain = Float(newValue)
+                }
             }
         }
     }
     /// Q of the filter. sqrt(0.5) is no resonance.
-    public var q: Double = 0.707 {
-        willSet(newValue) {
+    open dynamic var q: Double = 0.707 {
+        willSet {
             if q != newValue {
-                qParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        qParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.q = Float(newValue)
+                }
             }
         }
     }
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    public var isStarted: Bool {
-        return internalAU!.isPlaying()
+    open dynamic var isStarted: Bool {
+        return internalAU?.isPlaying() ?? false
     }
 
     // MARK: - Initialization
 
     /// Initialize this equalizer node
     ///
-    /// - parameter input: Input node to process
-    /// - parameter centerFrequency: Corner frequency.
-    /// - parameter gain: Amount at which the corner frequency value shall be increased or decreased. A value of 1 is a flat response.
-    /// - parameter q: Q of the filter. sqrt(0.5) is no resonance.
+    /// - Parameters:
+    ///   - input: Input node to process
+    ///   - centerFrequency: Corner frequency.
+    ///   - gain: Amount the corner frequency value shall be increased or decreased. A value of 1 is a flat response.
+    ///   - q: Q of the filter. sqrt(0.5) is no resonance.
     ///
     public init(
-        _ input: AKNode,
-        centerFrequency: Double = 1000,
+        _ input: AKNode?,
+        centerFrequency: Double = 1_000,
         gain: Double = 1.0,
         q: Double = 0.707) {
 
@@ -76,65 +97,52 @@ public class AKHighShelfParametricEqualizerFilter: AKNode, AKToggleable {
         self.gain = gain
         self.q = q
 
-        var description = AudioComponentDescription()
-        description.componentType         = kAudioUnitType_Effect
-        description.componentSubType      = 0x70657132 /*'peq2'*/
-        description.componentManufacturer = 0x41754b74 /*'AuKt'*/
-        description.componentFlags        = 0
-        description.componentFlagsMask    = 0
-
-        AUAudioUnit.registerSubclass(
-            AKHighShelfParametricEqualizerFilterAudioUnit.self,
-            asComponentDescription: description,
-            name: "Local AKHighShelfParametricEqualizerFilter",
-            version: UInt32.max)
+        _Self.register()
 
         super.init()
-        AVAudioUnit.instantiateWithComponentDescription(description, options: []) {
-            avAudioUnit, error in
+        AVAudioUnit._instantiate(with: _Self.ComponentDescription) { [weak self] avAudioUnit in
 
-            guard let avAudioUnitEffect = avAudioUnit else { return }
+            self?.avAudioNode = avAudioUnit
+            self?.internalAU = avAudioUnit.auAudioUnit as? AKAudioUnitType
 
-            self.avAudioNode = avAudioUnitEffect
-            self.internalAU = avAudioUnitEffect.AUAudioUnit as? AKHighShelfParametricEqualizerFilterAudioUnit
-
-            AudioKit.engine.attachNode(self.avAudioNode)
-            input.addConnectionPoint(self)
+            input?.addConnectionPoint(self!)
         }
 
-        guard let tree = internalAU?.parameterTree else { return }
+        guard let tree = internalAU?.parameterTree else {
+            return
+        }
 
-        centerFrequencyParameter = tree.valueForKey("centerFrequency") as? AUParameter
-        gainParameter            = tree.valueForKey("gain")            as? AUParameter
-        qParameter               = tree.valueForKey("q")               as? AUParameter
+        centerFrequencyParameter = tree["centerFrequency"]
+        gainParameter = tree["gain"]
+        qParameter = tree["q"]
 
-        token = tree.tokenByAddingParameterObserver {
-            address, value in
+        token = tree.token (byAddingParameterObserver: { [weak self] address, value in
 
-            dispatch_async(dispatch_get_main_queue()) {
-                if address == self.centerFrequencyParameter!.address {
-                    self.centerFrequency = Double(value)
-                } else if address == self.gainParameter!.address {
-                    self.gain = Double(value)
-                } else if address == self.qParameter!.address {
-                    self.q = Double(value)
+            DispatchQueue.main.async {
+                if address == self?.centerFrequencyParameter?.address {
+                    self?.centerFrequency = Double(value)
+                } else if address == self?.gainParameter?.address {
+                    self?.gain = Double(value)
+                } else if address == self?.qParameter?.address {
+                    self?.q = Double(value)
                 }
             }
-        }
-        centerFrequencyParameter?.setValue(Float(centerFrequency), originator: token!)
-        gainParameter?.setValue(Float(gain), originator: token!)
-        qParameter?.setValue(Float(q), originator: token!)
+        })
+
+        internalAU?.centerFrequency = Float(centerFrequency)
+        internalAU?.gain = Float(gain)
+        internalAU?.q = Float(q)
     }
-    
+
     // MARK: - Control
 
     /// Function to start, play, or activate the node, all do the same thing
-    public func start() {
-        self.internalAU!.start()
+    open func start() {
+        internalAU?.start()
     }
 
     /// Function to stop or bypass the node, both are equivalent
-    public func stop() {
-        self.internalAU!.stop()
+    open func stop() {
+        internalAU?.stop()
     }
 }

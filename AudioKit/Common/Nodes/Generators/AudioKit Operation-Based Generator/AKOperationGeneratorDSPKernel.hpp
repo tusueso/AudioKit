@@ -3,14 +3,15 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2015 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKOperationGeneratorDSPKernel_hpp
-#define AKOperationGeneratorDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import <vector>
+
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -18,23 +19,22 @@ extern "C" {
 #include "plumber.h"
 }
 
+#import "AKCustomUgenInfo.h"
 
-class AKOperationGeneratorDSPKernel : public AKDSPKernel {
+static int addUgensToKernel(plumber_data *pd, void *ud);
+
+class AKOperationGeneratorDSPKernel : public AKSoundpipeKernel, public AKOutputBuffered {
 public:
     // MARK: Member Functions
 
     AKOperationGeneratorDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
-
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
         plumber_register(&pd);
         plumber_init(&pd);
+        addUgensToFTable(&pd);
         pd.sp = sp;
         if (sporthCode != nil) {
             plumber_parse_string(&pd, sporthCode);
@@ -45,21 +45,29 @@ public:
     
     void setSporth(char *sporth) {
         sporthCode = sporth;
+        plumber_recompile_string_v2(&pd, sporthCode, this, &addUgensToKernel);
+    }
+
+    void addUgensToFTable(plumber_data *pd) {
+      for (auto info : customUgens) {
+        plumber_ftmap_add_function(pd, info.name, info.func, info.userData);
+      }
     }
     
-    void trigger(float params[]) {
-        internalTrigger = 1;
-        pd.p[0] = internalTrigger;
-        pd.p[1] = internalTrigger;
-        setParameters(params);
+    void trigger(int trigger) {
+        internalTriggers[trigger] = 1;
     }
     
     void setParameters(float params[]) {
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 14; i++) {
             parameters[i] = params[i];
         }
     };
-    
+
+    void addCustomUgen(AKCustomUgenInfo info) {
+        customUgens.push_back(info);
+    }
+
     void start() {
         started = true;
     }
@@ -71,7 +79,7 @@ public:
 
     void destroy() {
         plumber_clean(&pd);
-        sp_destroy(&sp);
+        AKSoundpipeKernel::destroy();
     }
     
     void reset() {
@@ -93,22 +101,21 @@ public:
         }
     }
 
-    void setBuffer(AudioBufferList *outBufferList) {
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
 
-        // For each sample.
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
 
             int frameOffset = int(frameIndex + bufferOffset);
+
             
-            pd.p[0] = internalTrigger;
-            pd.p[1] = internalTrigger;
-            for (int i = 0; i < 10; i++) {
-                pd.p[i+2] = parameters[i];
+            for (int i = 0; i < 14; i++) {
+                if (internalTriggers[i] == 1) {
+                    pd.p[i] = 1.0;
+                } else {
+                    pd.p[i] = parameters[i];
+                }
             }
+
             if (started) {
                 plumber_compute(&pd, PLUMBER_COMPUTE);
             }
@@ -122,8 +129,13 @@ public:
                 }
             }
         }
-        if (internalTrigger == 1) {
-            internalTrigger = 0;
+        
+        for (int i = 0; i < 14; i++) {
+            if (internalTriggers[i] == 1) {
+                pd.p[i] = 0.0;
+            }
+            parameters[i] = pd.p[i];
+            internalTriggers[i] = 0;
         }
     }
 
@@ -131,19 +143,19 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
-    int internalTrigger = 0;
-    float parameters[10] = {0,0,0,0,0,0,0,0,0,0};
+    int internalTriggers[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
     plumber_data pd;
     char *sporthCode = nil;
-    
+    std::vector<AKCustomUgenInfo> customUgens;
+
 public:
+    float parameters[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0};
     bool started = false;
 };
 
-#endif /* AKOperationGeneratorDSPKernel_hpp */
+static int addUgensToKernel(plumber_data *pd, void *ud) {
+  auto kernel = (AKOperationGeneratorDSPKernel *)ud;
+  kernel->addUgensToFTable(pd);
+  return PLUMBER_OK;
+}

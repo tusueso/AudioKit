@@ -3,139 +3,102 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
-
-import AVFoundation
 
 /// Clips a signal to a predefined limit, in a "soft" manner, using one of three
 /// methods.
 ///
-/// - parameter input: Input node to process
-/// - parameter limit: Threshold / limiting value.
-/// - parameter clippingStartPoint: When the clipping method is 0 (Bram De Jong), indicates point at which clipping starts in the range 0-1.
-/// - parameter method: Method of clipping. 0 = Bram de Jong, 1 = Sine, 2 = tanh.
-///
-public class AKClipper: AKNode, AKToggleable {
+open class AKClipper: AKNode, AKToggleable, AKComponent {
+    public typealias AKAudioUnitType = AKClipperAudioUnit
+    /// Four letter unique description of the node
+    public static let ComponentDescription = AudioComponentDescription(effect: "clip")
 
     // MARK: - Properties
 
+    private var internalAU: AKAudioUnitType?
+    private var token: AUParameterObserverToken?
 
-    internal var internalAU: AKClipperAudioUnit?
-    internal var token: AUParameterObserverToken?
+    fileprivate var limitParameter: AUParameter?
 
-    private var limitParameter: AUParameter?
-    private var clippingStartPointParameter: AUParameter?
-    private var methodParameter: AUParameter?
+    /// Ramp Time represents the speed at which parameters are allowed to change
+    open dynamic var rampTime: Double = AKSettings.rampTime {
+        willSet {
+            internalAU?.rampTime = newValue
+        }
+    }
 
     /// Threshold / limiting value.
-    public var limit: Double = 1.0 {
-        willSet(newValue) {
+    open dynamic var limit: Double = 1.0 {
+        willSet {
             if limit != newValue {
-                limitParameter?.setValue(Float(newValue), originator: token!)
-            }
-        }
-    }
-    /// When the clipping method is 0 (Bram De Jong), indicates point at which clipping starts in the range 0-1.
-    public var clippingStartPoint: Double = 0.5 {
-        willSet(newValue) {
-            if clippingStartPoint != newValue {
-                clippingStartPointParameter?.setValue(Float(newValue), originator: token!)
-            }
-        }
-    }
-    /// Method of clipping. 0 = Bram de Jong, 1 = Sine, 2 = tanh.
-    public var method: Double = 0 {
-        willSet(newValue) {
-            if method != newValue {
-                methodParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        limitParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.limit = Float(newValue)
+                }
             }
         }
     }
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    public var isStarted: Bool {
-        return internalAU!.isPlaying()
+    open dynamic var isStarted: Bool {
+        return internalAU?.isPlaying() ?? false
     }
 
     // MARK: - Initialization
 
     /// Initialize this clipper node
     ///
-    /// - parameter input: Input node to process
-    /// - parameter limit: Threshold / limiting value.
-    /// - parameter clippingStartPoint: When the clipping method is 0 (Bram De Jong), indicates point at which clipping starts in the range 0-1.
-    /// - parameter method: Method of clipping. 0 = Bram de Jong, 1 = Sine, 2 = tanh.
+    /// - Parameters:
+    ///   - input: Input node to process
+    ///   - limit: Threshold / limiting value.
     ///
     public init(
-        _ input: AKNode,
-        limit: Double = 1.0,
-        clippingStartPoint: Double = 0.5,
-        method: Double = 0) {
+        _ input: AKNode?,
+        limit: Double = 1.0) {
 
         self.limit = limit
-        self.clippingStartPoint = clippingStartPoint
-        self.method = method
 
-        var description = AudioComponentDescription()
-        description.componentType         = kAudioUnitType_Effect
-        description.componentSubType      = 0x636c6970 /*'clip'*/
-        description.componentManufacturer = 0x41754b74 /*'AuKt'*/
-        description.componentFlags        = 0
-        description.componentFlagsMask    = 0
-
-        AUAudioUnit.registerSubclass(
-            AKClipperAudioUnit.self,
-            asComponentDescription: description,
-            name: "Local AKClipper",
-            version: UInt32.max)
+        _Self.register()
 
         super.init()
-        AVAudioUnit.instantiateWithComponentDescription(description, options: []) {
-            avAudioUnit, error in
+        AVAudioUnit._instantiate(with: _Self.ComponentDescription) { [weak self] in
+            self?.avAudioNode = $0
+            self?.internalAU = $0.auAudioUnit as? AKAudioUnitType
 
-            guard let avAudioUnitEffect = avAudioUnit else { return }
-
-            self.avAudioNode = avAudioUnitEffect
-            self.internalAU = avAudioUnitEffect.AUAudioUnit as? AKClipperAudioUnit
-
-            AudioKit.engine.attachNode(self.avAudioNode)
-            input.addConnectionPoint(self)
+            input?.addConnectionPoint(self!)
         }
 
-        guard let tree = internalAU?.parameterTree else { return }
+        guard let tree = internalAU?.parameterTree else {
+            return
+        }
 
-        limitParameter              = tree.valueForKey("limit")              as? AUParameter
-        clippingStartPointParameter = tree.valueForKey("clippingStartPoint") as? AUParameter
-        methodParameter             = tree.valueForKey("method")             as? AUParameter
+        limitParameter = tree["limit"]
 
-        token = tree.tokenByAddingParameterObserver {
-            address, value in
+        token = tree.token (byAddingParameterObserver: { [weak self] address, value in
 
-            dispatch_async(dispatch_get_main_queue()) {
-                if address == self.limitParameter!.address {
-                    self.limit = Double(value)
-                } else if address == self.clippingStartPointParameter!.address {
-                    self.clippingStartPoint = Double(value)
-                } else if address == self.methodParameter!.address {
-                    self.method = Double(value)
+            DispatchQueue.main.async {
+                if address == self?.limitParameter?.address {
+                    self?.limit = Double(value)
                 }
             }
-        }
-        limitParameter?.setValue(Float(limit), originator: token!)
-        clippingStartPointParameter?.setValue(Float(clippingStartPoint), originator: token!)
-        methodParameter?.setValue(Float(method), originator: token!)
+        })
+
+        internalAU?.limit = Float(limit)
     }
-    
+
     // MARK: - Control
 
     /// Function to start, play, or activate the node, all do the same thing
-    public func start() {
-        self.internalAU!.start()
+    open func start() {
+        internalAU?.start()
     }
 
     /// Function to stop or bypass the node, both are equivalent
-    public func stop() {
-        self.internalAU!.stop()
+    open func stop() {
+        internalAU?.stop()
     }
 }

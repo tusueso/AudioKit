@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKCostelloReverbDSPKernel_hpp
-#define AKCostelloReverbDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -23,24 +22,22 @@ enum {
     cutoffFrequencyAddress = 1
 };
 
-class AKCostelloReverbDSPKernel : public AKDSPKernel {
+class AKCostelloReverbDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKCostelloReverbDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
-
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
         sp_revsc_create(&revsc);
         sp_revsc_init(sp, revsc);
         revsc->feedback = 0.6;
         revsc->lpfreq = 4000;
+
+        feedbackRamper.init();
+        cutoffFrequencyRamper.init();
     }
 
     void start() {
@@ -53,20 +50,34 @@ public:
 
     void destroy() {
         sp_revsc_destroy(&revsc);
-        sp_destroy(&sp);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        feedbackRamper.reset();
+        cutoffFrequencyRamper.reset();
     }
+
+    void setFeedback(float value) {
+        feedback = clamp(value, 0.0f, 1.0f);
+        feedbackRamper.setImmediate(feedback);
+    }
+
+    void setCutoffFrequency(float value) {
+        cutoffFrequency = clamp(value, 12.0f, 20000.0f);
+        cutoffFrequencyRamper.setImmediate(cutoffFrequency);
+    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case feedbackAddress:
-                feedbackRamper.set(clamp(value, (float)0.0, (float)1.0));
+                feedbackRamper.setUIValue(clamp(value, 0.0f, 1.0f));
                 break;
 
             case cutoffFrequencyAddress:
-                cutoffFrequencyRamper.set(clamp(value, (float)12.0, (float)20000.0));
+                cutoffFrequencyRamper.setUIValue(clamp(value, 12.0f, 20000.0f));
                 break;
 
         }
@@ -75,10 +86,10 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case feedbackAddress:
-                return feedbackRamper.goal();
+                return feedbackRamper.getUIValue();
 
             case cutoffFrequencyAddress:
-                return cutoffFrequencyRamper.goal();
+                return cutoffFrequencyRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -87,49 +98,44 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case feedbackAddress:
-                feedbackRamper.startRamp(clamp(value, (float)0.0, (float)1.0), duration);
+                feedbackRamper.startRamp(clamp(value, 0.0f, 1.0f), duration);
                 break;
 
             case cutoffFrequencyAddress:
-                cutoffFrequencyRamper.startRamp(clamp(value, (float)12.0, (float)20000.0), duration);
+                cutoffFrequencyRamper.startRamp(clamp(value, 12.0f, 20000.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
-        for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
-            double feedback = double(feedbackRamper.getStep());
-            double cutoffFrequency = double(cutoffFrequencyRamper.getStep());
+        for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
 
             int frameOffset = int(frameIndex + bufferOffset);
 
+            feedback = feedbackRamper.getAndStep();
             revsc->feedback = (float)feedback;
+            cutoffFrequency = cutoffFrequencyRamper.getAndStep();
             revsc->lpfreq = (float)cutoffFrequency;
+
             float *tmpin[2];
             float *tmpout[2];
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
+
                 if (channel < 2) {
                     tmpin[channel] = in;
                     tmpout[channel] = out;
                 }
             }
-            sp_revsc_compute(sp, revsc, tmpin[0], tmpin[1], tmpout[0], tmpout[1]);
-
+            if (started) {
+                sp_revsc_compute(sp, revsc, tmpin[0], tmpin[1], tmpout[0], tmpout[1]);
+            } else {
+                tmpout[0] = tmpin[0];
+                tmpout[1] = tmpin[1];
+            }
         }
     }
 
@@ -137,19 +143,15 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
-
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
     sp_revsc *revsc;
+
+    float feedback = 0.6;
+    float cutoffFrequency = 4000;
 
 public:
     bool started = true;
-    AKParameterRamper feedbackRamper = 0.6;
-    AKParameterRamper cutoffFrequencyRamper = 4000;
+    bool resetted = false;
+    ParameterRamper feedbackRamper = 0.6;
+    ParameterRamper cutoffFrequencyRamper = 4000;
 };
 
-#endif /* AKCostelloReverbDSPKernel_hpp */

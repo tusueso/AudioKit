@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2015 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKBalancerDSPKernel_hpp
-#define AKBalancerDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -19,20 +18,15 @@ extern "C" {
 }
 
 
-class AKBalancerDSPKernel : public AKDSPKernel {
+class AKBalancerDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKBalancerDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
-
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
         sp_bal_create(&bal);
         sp_bal_init(sp, bal);
     }
@@ -47,7 +41,7 @@ public:
     
     void destroy() {
         sp_bal_destroy(&bal);
-        sp_destroy(&sp);
+        AKSoundpipeKernel::destroy();
     }
     
     void reset() {
@@ -78,24 +72,20 @@ public:
 
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
         
-        if (!started) {
-            outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-            outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-            return;
-        }
-        
-        // For each sample.
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
 
             int frameOffset = int(frameIndex + bufferOffset);
-
 
             for (int channel = 0; channel < channels; ++channel) {
                 float *in   = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *comp = (float *)compBufferListPtr->mBuffers[channel].mData + frameOffset;
                 float *out  = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
-//                *out = *in;
-                sp_bal_compute(sp, bal, in, comp, out);
+                
+                if (started) {
+                    sp_bal_compute(sp, bal, in, comp, out);
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -104,19 +94,13 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
     int inputChannels = 4;
-    float sampleRate = AKSettings.sampleRate;
 
-    AudioBufferList* inBufferListPtr = nullptr;
-    AudioBufferList* compBufferListPtr = nullptr;
-    AudioBufferList* outBufferListPtr = nullptr;
+    AudioBufferList *compBufferListPtr = nullptr;
 
-    sp_data *sp;
     sp_bal *bal;
 
 public:
     bool started = true;
 };
 
-#endif /* AKBalancerDSPKernel_hpp */

@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKDCBlockDSPKernel_hpp
-#define AKDCBlockDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -19,22 +18,20 @@ extern "C" {
 }
 
 
-class AKDCBlockDSPKernel : public AKDSPKernel {
+class AKDCBlockDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKDCBlockDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
+        sp_dcblock_create(&dcblock0);
+        sp_dcblock_create(&dcblock1);
+        sp_dcblock_init(sp, dcblock0);
+        sp_dcblock_init(sp, dcblock1);
 
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_dcblock_create(&dcblock);
-        sp_dcblock_init(sp, dcblock);
     }
 
     void start() {
@@ -46,12 +43,15 @@ public:
     }
 
     void destroy() {
-        sp_dcblock_destroy(&dcblock);
-        sp_destroy(&sp);
+        sp_dcblock_destroy(&dcblock0);
+        sp_dcblock_destroy(&dcblock1);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
     }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
@@ -69,27 +69,26 @@ public:
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
 
             int frameOffset = int(frameIndex + bufferOffset);
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
+
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
 
-                sp_dcblock_compute(sp, dcblock, in, out);
+                if (started) {
+                    if (channel == 0) {
+                        sp_dcblock_compute(sp, dcblock0, in, out);
+                    } else {
+                        sp_dcblock_compute(sp, dcblock1, in, out);
+                    }
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -98,17 +97,11 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
+    sp_dcblock *dcblock0;
+    sp_dcblock *dcblock1;
 
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
-    sp_dcblock *dcblock;
 
 public:
     bool started = true;
+    bool resetted = false;
 };
-
-#endif /* AKDCBlockDSPKernel_hpp */

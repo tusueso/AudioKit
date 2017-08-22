@@ -5,75 +5,66 @@
 
 #include "plumber.h"
 
-typedef struct {
-    sp_ftbl *ft;
-    SPFLOAT val;
-    unsigned int index;
-    int record;
-} sporth_tbl_d;
-
 int sporth_tblrec(sporth_stack *stack, void *ud)
 {
     plumber_data *pd = ud;
-    sporth_tbl_d *td;
-    char *ftname;
+    sp_tblrec *td;
+    sp_ftbl *ft;
+    const char *ftname;
     SPFLOAT trig = 0;
+    SPFLOAT in = 0;
+    SPFLOAT out = 0;
 
     switch(pd->mode){
         case PLUMBER_CREATE:
-            td = malloc(sizeof(sporth_tbl_d));
+            sp_tblrec_create(&td);
             plumber_add_ugen(pd, SPORTH_TBLREC, td);
-            break;
-
-        case PLUMBER_INIT:
             if(sporth_check_args(stack, "ffs") != SPORTH_OK) {
-               fprintf(stderr,"Init: not enough arguments for tblrec\n");
+               plumber_print(pd,"Init: not enough arguments for tblrec\n");
                 return PLUMBER_NOTOK;
             }
-            td = pd->last->ud;
             ftname = sporth_stack_pop_string(stack);
             trig = sporth_stack_pop_float(stack);
-            td->val = sporth_stack_pop_float(stack);
+            in = sporth_stack_pop_float(stack);
             td->index = 0;
             td->record = 0;
-            if(plumber_ftmap_search(pd, ftname, &td->ft) == PLUMBER_NOTOK) {
-                fprintf(stderr, "tblrec: could not find table '%s'\n", ftname);
+            if(plumber_ftmap_search(pd, ftname, &ft) == PLUMBER_NOTOK) {
+                plumber_print(pd, "tblrec: could not find table '%s'\n", ftname);
                 stack->error++;
                 return PLUMBER_NOTOK;
             }
-            free(ftname);
+            sp_tblrec_init(pd->sp, td, ft);
+            sporth_stack_push_float(stack, in);
+            break;
+
+        case PLUMBER_INIT:
+            td = pd->last->ud;
+            ftname = sporth_stack_pop_string(stack);
+            sporth_stack_pop_float(stack);
+            in = sporth_stack_pop_float(stack);
+            td->index = 0;
+            td->record = 0;
+            sporth_stack_push_float(stack, in);
             break;
 
         case PLUMBER_COMPUTE:
             td = pd->last->ud;
             trig = sporth_stack_pop_float(stack);
-            td->val = sporth_stack_pop_float(stack);
+            in = sporth_stack_pop_float(stack);
+            
+            sp_tblrec_compute(pd->sp, td, &in, &trig, &out);
+            sporth_stack_push_float(stack, out);
 
-            if(trig != 0) {
-                if(td->record == 1) {
-                    td->record = 0;
-                } else {
-                    td->record = 1;
-                    td->index = 0;
-                    memset(td->ft->tbl, 0, sizeof(SPFLOAT) * td->ft->size);
-                }
-            }
-
-            if(td->record) {
-                td->ft->tbl[td->index] = td->val;
-                td->index = (td->index + 1) % td->ft->size;
-            }
             break;
 
         case PLUMBER_DESTROY:
             td = pd->last->ud;
-            free(td);
+            sp_tblrec_destroy(&td);
             break;
 
         default:
-            fprintf(stderr,"Error: Unknown mode!\n");
+            plumber_print(pd,"Error: Unknown mode!\n");
             break;
     }
     return PLUMBER_OK;
 }
-

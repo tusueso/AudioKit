@@ -3,107 +3,138 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2015 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-import AVFoundation
-
 /// Operation-based generator
-public class AKOperationGenerator: AKNode, AKToggleable {
+open class AKOperationGenerator: AKNode, AKToggleable, AKComponent {
+    public typealias AKAudioUnitType = AKOperationGeneratorAudioUnit
+    /// Four letter unique description of the node
+    public static let ComponentDescription = AudioComponentDescription(generator: "cstg")
 
     // MARK: - Properties
 
-    
-    private var internalAU: AKOperationGeneratorAudioUnit?
+    fileprivate var internalAU: AKAudioUnitType?
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    public var isStarted: Bool {
-        return internalAU!.isPlaying()
+    open dynamic var isStarted: Bool {
+        return internalAU?.isPlaying() ?? false
     }
-    
-    /// Parameters for changing internal operations
-    public var parameters: [Double] = [] {
+
+    /// Sporth language snippet
+    open dynamic var sporth: String = "" {
         didSet {
-            internalAU?.setParameters(parameters)
+            restart()
         }
     }
-    
+
+    /// Parameters for changing internal operations
+    open dynamic var parameters: [Double] {
+        get {
+            var result: [Double] = []
+            if let floatParameters = internalAU?.parameters as? [NSNumber] {
+                for number in floatParameters {
+                    result.append(number.doubleValue)
+                }
+            }
+            return result
+        }
+        set {
+            internalAU?.parameters = newValue
+        }
+    }
+
+    private var customUgens: [AKCustomUgen]
+
     // MARK: - Initializers
-    
-    /// Initialize the generator with an operation and indicate whether it responds to a trigger
+
+    /// Initialize with a mono or stereo operation
     ///
-    /// - parameter operation: AKOperation stack to use
+    /// - parameter operation: Operation to generate, can be mono or stereo
     ///
-    public convenience init(operation: AKOperation) {
-        let operationString = "\(operation) dup"
-        self.init(operationString)
+    public convenience init(operation: ([AKOperation]) -> AKComputedParameter) {
+
+        let computedParameter = operation(AKOperation.parameters)
+
+        if type(of: computedParameter) == AKOperation.self {
+            if let monoOperation = computedParameter as? AKOperation {
+                self.init(sporth: monoOperation.sporth + " dup ")
+                return
+            }
+        } else {
+            if let stereoOperation = computedParameter as? AKStereoOperation {
+                self.init(sporth: stereoOperation.sporth + " swap ")
+                return
+            }
+        }
+        AKLog("Operation initialization failed.")
+        self.init(sporth: "")
     }
-    
-    /// Initialize the generator with a stereo operation and indicate whether it responds to a trigger
+
+    /// Initialize the generator for stereo (2 channels)
     ///
-    /// - parameter stereoOperation: AKStereoOperation stack to use
+    /// - Parameters:
+    ///   - numberOfChannels: Only 2 channels are supported, but need to differentiate the initializer
+    ///   - operations:       Array of operations [left, right]
     ///
-    public convenience init(stereoOperation: AKStereoOperation) {
-        let operationString = "\(stereoOperation) swap"
-        self.init(operationString)
+    public convenience init(numberOfChannels: Int, operations: ([AKOperation]) -> [AKOperation]) {
+
+        let computedParameters = operations(AKOperation.parameters)
+        let left = computedParameters[0]
+
+        if numberOfChannels == 2 {
+            let right = computedParameters[1]
+            self.init(sporth: "\(right.sporth) \(left.sporth)")
+        } else {
+            self.init(sporth: "\(left.sporth)")
+        }
     }
-    
-    /// Initialize the generator with a two mono operations for the left and right channel and indicate whether it responds to a trigger
-    ///
-    /// - parameter left: AKOperation to be heard from the left output
-    /// - parameter right: AKOperation to be heard from the right output
-    ///
-    public convenience init(left: AKOperation, right: AKOperation) {
-        let operationString = "\(left) \(right)"
-        self.init(operationString)
-    }
-    
+
     /// Initialize this generator node with a generic sporth stack and a triggering flag
     ///
     /// - parameter sporth: String of valid Sporth code
     ///
-    public init(_ sporth: String) {
+    public init(sporth: String, customUgens: [AKCustomUgen] = []) {
+        self.sporth = sporth
+        self.customUgens = customUgens
 
-        var description = AudioComponentDescription()
-        description.componentType         = kAudioUnitType_Generator
-        description.componentSubType      = 0x63737467 /*'cstg'*/ 
-        description.componentManufacturer = 0x41754b74 /*'AuKt'*/
-        description.componentFlags        = 0
-        description.componentFlagsMask    = 0
-
-        AUAudioUnit.registerSubclass(
-            AKOperationGeneratorAudioUnit.self,
-            asComponentDescription: description,
-            name: "Local AKOperationGenerator",
-            version: UInt32.max)
+        _Self.register()
 
         super.init()
-        AVAudioUnit.instantiateWithComponentDescription(description, options: []) {
-            avAudioUnit, error in
+        AVAudioUnit._instantiate(with: _Self.ComponentDescription) { [weak self] avAudioUnit in
 
-            guard let avAudioUnitEffect = avAudioUnit else { return }
-
-            self.avAudioNode = avAudioUnitEffect
-            self.internalAU = avAudioUnitEffect.AUAudioUnit as? AKOperationGeneratorAudioUnit
-            AudioKit.engine.attachNode(self.avAudioNode)
-            self.internalAU?.setSporth(sporth)
+            self?.avAudioNode = avAudioUnit
+            self?.internalAU = avAudioUnit.auAudioUnit as? AKAudioUnitType
+            for ugen in self?.customUgens ?? [] {
+              self?.internalAU?.add(ugen)
+            }
+            self?.internalAU?.setSporth(sporth)
         }
     }
-    
-    /// Trigger the sound with an optional set of parameters
-    /// - parameter parameters: An array of doubles to use as parameters
+
+    /// Trigger the sound with current parameters
     ///
-    public func trigger(parameters: [Double] = []) {
-        self.internalAU!.trigger(parameters)
+    open func trigger(_ triggerNumber: Int = 0) {
+        internalAU?.trigger(Int32(triggerNumber))
     }
-    
+
     /// Function to start, play, or activate the node, all do the same thing
-    public func start() {
-        self.internalAU!.start()
+    open func start() {
+        internalAU?.start()
     }
-    
+
     /// Function to stop or bypass the node, both are equivalent
-    public func stop() {
-        self.internalAU!.stop()
+    open func stop() {
+        internalAU?.stop()
+    }
+
+    /// Restart from scratch
+    open func restart() {
+        stop()
+        for ugen in customUgens {
+            internalAU?.add(ugen)
+        }
+        internalAU?.setSporth(sporth)
+        start()
     }
 }

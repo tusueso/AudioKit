@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKTanhDistortionDSPKernel_hpp
-#define AKTanhDistortionDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -25,26 +24,32 @@ enum {
     negativeShapeParameterAddress = 3
 };
 
-class AKTanhDistortionDSPKernel : public AKDSPKernel {
+class AKTanhDistortionDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKTanhDistortionDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
+        sp_dist_create(&dist0);
+        sp_dist_create(&dist1);
+        sp_dist_init(sp, dist0);
+        sp_dist_init(sp, dist1);
+        dist0->pregain = 2.0;
+        dist1->pregain = 2.0;
+        dist0->postgain = 0.5;
+        dist1->postgain = 0.5;
+        dist0->shape1 = 0.0;
+        dist1->shape1 = 0.0;
+        dist0->shape2 = 0.0;
+        dist1->shape2 = 0.0;
 
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_dist_create(&dist);
-        sp_dist_init(sp, dist);
-        dist->pregain = 2.0;
-        dist->postgain = 0.5;
-        dist->shape1 = 0.0;
-        dist->shape2 = 0.0;
+        pregainRamper.init();
+        postgainRamper.init();
+        postiveShapeParameterRamper.init();
+        negativeShapeParameterRamper.init();
     }
 
     void start() {
@@ -56,29 +61,56 @@ public:
     }
 
     void destroy() {
-        sp_dist_destroy(&dist);
-        sp_destroy(&sp);
+        sp_dist_destroy(&dist0);
+        sp_dist_destroy(&dist1);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        pregainRamper.reset();
+        postgainRamper.reset();
+        postiveShapeParameterRamper.reset();
+        negativeShapeParameterRamper.reset();
     }
+
+    void setPregain(float value) {
+        pregain = clamp(value, 0.0f, 10.0f);
+        pregainRamper.setImmediate(pregain);
+    }
+
+    void setPostgain(float value) {
+        postgain = clamp(value, 0.0f, 10.0f);
+        postgainRamper.setImmediate(postgain);
+    }
+
+    void setPostiveShapeParameter(float value) {
+        postiveShapeParameter = clamp(value, -10.0f, 10.0f);
+        postiveShapeParameterRamper.setImmediate(postiveShapeParameter);
+    }
+
+    void setNegativeShapeParameter(float value) {
+        negativeShapeParameter = clamp(value, -10.0f, 10.0f);
+        negativeShapeParameterRamper.setImmediate(negativeShapeParameter);
+    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case pregainAddress:
-                pregainRamper.set(clamp(value, (float)0.0, (float)10.0));
+                pregainRamper.setUIValue(clamp(value, 0.0f, 10.0f));
                 break;
 
             case postgainAddress:
-                postgainRamper.set(clamp(value, (float)0.0, (float)10.0));
+                postgainRamper.setUIValue(clamp(value, 0.0f, 10.0f));
                 break;
 
             case postiveShapeParameterAddress:
-                postiveShapeParameterRamper.set(clamp(value, (float)-10.0, (float)10.0));
+                postiveShapeParameterRamper.setUIValue(clamp(value, -10.0f, 10.0f));
                 break;
 
             case negativeShapeParameterAddress:
-                negativeShapeParameterRamper.set(clamp(value, (float)-10.0, (float)10.0));
+                negativeShapeParameterRamper.setUIValue(clamp(value, -10.0f, 10.0f));
                 break;
 
         }
@@ -87,16 +119,16 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case pregainAddress:
-                return pregainRamper.goal();
+                return pregainRamper.getUIValue();
 
             case postgainAddress:
-                return postgainRamper.goal();
+                return postgainRamper.getUIValue();
 
             case postiveShapeParameterAddress:
-                return postiveShapeParameterRamper.goal();
+                return postiveShapeParameterRamper.getUIValue();
 
             case negativeShapeParameterAddress:
-                return negativeShapeParameterRamper.goal();
+                return negativeShapeParameterRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -105,54 +137,56 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case pregainAddress:
-                pregainRamper.startRamp(clamp(value, (float)0.0, (float)10.0), duration);
+                pregainRamper.startRamp(clamp(value, 0.0f, 10.0f), duration);
                 break;
 
             case postgainAddress:
-                postgainRamper.startRamp(clamp(value, (float)0.0, (float)10.0), duration);
+                postgainRamper.startRamp(clamp(value, 0.0f, 10.0f), duration);
                 break;
 
             case postiveShapeParameterAddress:
-                postiveShapeParameterRamper.startRamp(clamp(value, (float)-10.0, (float)10.0), duration);
+                postiveShapeParameterRamper.startRamp(clamp(value, -10.0f, 10.0f), duration);
                 break;
 
             case negativeShapeParameterAddress:
-                negativeShapeParameterRamper.startRamp(clamp(value, (float)-10.0, (float)10.0), duration);
+                negativeShapeParameterRamper.startRamp(clamp(value, -10.0f, 10.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
-            double pregain = double(pregainRamper.getStep());
-            double postgain = double(postgainRamper.getStep());
-            double postiveShapeParameter = double(postiveShapeParameterRamper.getStep());
-            double negativeShapeParameter = double(negativeShapeParameterRamper.getStep());
 
             int frameOffset = int(frameIndex + bufferOffset);
 
-            dist->pregain = (float)pregain;
-            dist->postgain = (float)postgain;
-            dist->shape1 = (float)postiveShapeParameter;
-            dist->shape2 = (float)negativeShapeParameter;
+            pregain = pregainRamper.getAndStep();
+            dist0->pregain = (float)pregain;
+            dist1->pregain = (float)pregain;
+            postgain = postgainRamper.getAndStep();
+            dist0->postgain = (float)postgain;
+            dist1->postgain = (float)postgain;
+            postiveShapeParameter = postiveShapeParameterRamper.getAndStep();
+            dist0->shape1 = (float)postiveShapeParameter;
+            dist1->shape1 = (float)postiveShapeParameter;
+            negativeShapeParameter = negativeShapeParameterRamper.getAndStep();
+            dist0->shape2 = (float)negativeShapeParameter;
+            dist1->shape2 = (float)negativeShapeParameter;
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
 
-                sp_dist_compute(sp, dist, in, out);
+                if (started) {
+                    if (channel == 0) {
+                        sp_dist_compute(sp, dist0, in, out);
+                    } else {
+                        sp_dist_compute(sp, dist1, in, out);
+                    }
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -161,21 +195,19 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
+    sp_dist *dist0;
+    sp_dist *dist1;
 
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
-    sp_dist *dist;
+    float pregain = 2.0;
+    float postgain = 0.5;
+    float postiveShapeParameter = 0.0;
+    float negativeShapeParameter = 0.0;
 
 public:
     bool started = true;
-    AKParameterRamper pregainRamper = 2.0;
-    AKParameterRamper postgainRamper = 0.5;
-    AKParameterRamper postiveShapeParameterRamper = 0.0;
-    AKParameterRamper negativeShapeParameterRamper = 0.0;
+    bool resetted = false;
+    ParameterRamper pregainRamper = 2.0;
+    ParameterRamper postgainRamper = 0.5;
+    ParameterRamper postiveShapeParameterRamper = 0.0;
+    ParameterRamper negativeShapeParameterRamper = 0.0;
 };
-
-#endif /* AKTanhDistortionDSPKernel_hpp */

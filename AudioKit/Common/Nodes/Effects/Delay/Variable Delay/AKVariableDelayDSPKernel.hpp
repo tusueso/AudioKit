@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKVariableDelayDSPKernel_hpp
-#define AKVariableDelayDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -23,20 +22,15 @@ enum {
     feedbackAddress = 1
 };
 
-class AKVariableDelayDSPKernel : public AKDSPKernel {
+class AKVariableDelayDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKVariableDelayDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
-
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
         plumber_register(&pd);
         plumber_init(&pd);
         pd.sp = sp;
@@ -44,6 +38,9 @@ public:
         char *sporthCode = (char *)[sporth UTF8String];
         plumber_parse_string(&pd, sporthCode);
         plumber_compute(&pd, PLUMBER_INIT);
+
+        timeRamper.init();
+        feedbackRamper.init();
     }
 
     void start() {
@@ -56,23 +53,38 @@ public:
 
     void destroy() {
         plumber_clean(&pd);
-        sp_destroy(&sp);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        timeRamper.reset();
+        feedbackRamper.reset();
     }
+
     void setMaxDelayTime(float duration) {
         internalMaxDelay = duration;
     }
+    
+    void setTime(float value) {
+        time = clamp(value, 0.0f, 10.0f);
+        timeRamper.setImmediate(time);
+    }
+
+    void setFeedback(float value) {
+        feedback = clamp(value, 0.0f, 1.0f);
+        feedbackRamper.setImmediate(feedback);
+    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case timeAddress:
-                timeRamper.set(clamp(value, (float)0, (float)10));
+                timeRamper.setUIValue(clamp(value, 0.0f, 10.0f));
                 break;
 
             case feedbackAddress:
-                feedbackRamper.set(clamp(value, (float)0, (float)1));
+                feedbackRamper.setUIValue(clamp(value, 0.0f, 1.0f));
                 break;
 
         }
@@ -81,10 +93,10 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case timeAddress:
-                return timeRamper.goal();
+                return timeRamper.getUIValue();
 
             case feedbackAddress:
-                return feedbackRamper.goal();
+                return feedbackRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -93,28 +105,24 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case timeAddress:
-                timeRamper.startRamp(clamp(value, (float)0, (float)10), duration);
+                timeRamper.startRamp(clamp(value, 0.0f, 10.0f), duration);
                 break;
 
             case feedbackAddress:
-                feedbackRamper.startRamp(clamp(value, (float)0, (float)1), duration);
+                feedbackRamper.startRamp(clamp(value, 0.0f, 1.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
-            double time = double(timeRamper.getStep());
-            double feedback = double(feedbackRamper.getStep());
 
             int frameOffset = int(frameIndex + bufferOffset);
+
+            time = timeRamper.getAndStep();
+            feedback = feedbackRamper.getAndStep();
 
             if (!started) {
                 outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
@@ -133,7 +141,7 @@ public:
             
             for (int channel = 0; channel < channels; ++channel) {
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
-                    *out = sporth_stack_pop_float(&pd.sporth.stack);
+                *out = sporth_stack_pop_float(&pd.sporth.stack);
             }
         }
     }
@@ -142,21 +150,17 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
-
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
     plumber_data pd;
     
     float internalMaxDelay = 5.0;
 
+    float time = 1;
+    float feedback = 0;
+
 public:
     bool started = true;
-    AKParameterRamper timeRamper = 1;
-    AKParameterRamper feedbackRamper = 0;
+    bool resetted = false;
+    ParameterRamper timeRamper = 1;
+    ParameterRamper feedbackRamper = 0;
 };
 
-#endif /* AKVariableDelayDSPKernel_hpp */

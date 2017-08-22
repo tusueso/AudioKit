@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKToneComplementFilterDSPKernel_hpp
-#define AKToneComplementFilterDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -22,23 +21,23 @@ enum {
     halfPowerPointAddress = 0
 };
 
-class AKToneComplementFilterDSPKernel : public AKDSPKernel {
+class AKToneComplementFilterDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKToneComplementFilterDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
+        sp_atone_create(&atone0);
+        sp_atone_create(&atone1);
+        sp_atone_init(sp, atone0);
+        sp_atone_init(sp, atone1);
+        atone0->hp = 1000.0;
+        atone1->hp = 1000.0;
 
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_atone_create(&atone);
-        sp_atone_init(sp, atone);
-        atone->hp = 1000;
+        halfPowerPointRamper.init();
     }
 
     void start() {
@@ -50,17 +49,26 @@ public:
     }
 
     void destroy() {
-        sp_atone_destroy(&atone);
-        sp_destroy(&sp);
+        sp_atone_destroy(&atone0);
+        sp_atone_destroy(&atone1);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        halfPowerPointRamper.reset();
     }
+
+    void setHalfPowerPoint(float value) {
+        halfPowerPoint = clamp(value, 12.0f, 20000.0f);
+        halfPowerPointRamper.setImmediate(halfPowerPoint);
+    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case halfPowerPointAddress:
-                halfPowerPointRamper.set(clamp(value, (float)12.0, (float)20000.0));
+                halfPowerPointRamper.setUIValue(clamp(value, 12.0f, 20000.0f));
                 break;
 
         }
@@ -69,7 +77,7 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case halfPowerPointAddress:
-                return halfPowerPointRamper.goal();
+                return halfPowerPointRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -78,36 +86,35 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case halfPowerPointAddress:
-                halfPowerPointRamper.startRamp(clamp(value, (float)12.0, (float)20000.0), duration);
+                halfPowerPointRamper.startRamp(clamp(value, 12.0f, 20000.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
-            double halfPowerPoint = double(halfPowerPointRamper.getStep());
 
             int frameOffset = int(frameIndex + bufferOffset);
 
-            atone->hp = (float)halfPowerPoint;
+            halfPowerPoint = halfPowerPointRamper.getAndStep();
+            atone0->hp = (float)halfPowerPoint;
+            atone1->hp = (float)halfPowerPoint;
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
 
-                sp_atone_compute(sp, atone, in, out);
+                if (started) {
+                    if (channel == 0) {
+                        sp_atone_compute(sp, atone0, in, out);
+                    } else {
+                        sp_atone_compute(sp, atone1, in, out);
+                    }
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -116,18 +123,13 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
+    sp_atone *atone0;
+    sp_atone *atone1;
 
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
-    sp_atone *atone;
+    float halfPowerPoint = 1000.0;
 
 public:
     bool started = true;
-    AKParameterRamper halfPowerPointRamper = 1000;
+    bool resetted = false;
+    ParameterRamper halfPowerPointRamper = 1000.0;
 };
-
-#endif /* AKToneComplementFilterDSPKernel_hpp */

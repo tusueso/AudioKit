@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKClipperDSPKernel_hpp
-#define AKClipperDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -19,30 +18,26 @@ extern "C" {
 }
 
 enum {
-    limitAddress = 0,
-    clippingStartPointAddress = 1,
-    methodAddress = 2
+    limitAddress = 0
 };
 
-class AKClipperDSPKernel : public AKDSPKernel {
+class AKClipperDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKClipperDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
+        sp_clip_create(&clip0);
+        sp_clip_create(&clip1);
+        sp_clip_init(sp, clip0);
+        sp_clip_init(sp, clip1);
+        clip0->lim = 1.0;
+        clip1->lim = 1.0;
 
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_clip_create(&clip);
-        sp_clip_init(sp, clip);
-        clip->lim = 1.0;
-        clip->arg = 0.5;
-        clip->meth = 0;
+        limitRamper.init();
     }
 
     void start() {
@@ -54,25 +49,26 @@ public:
     }
 
     void destroy() {
-        sp_clip_destroy(&clip);
-        sp_destroy(&sp);
+        sp_clip_destroy(&clip0);
+        sp_clip_destroy(&clip1);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        limitRamper.reset();
     }
+
+    void setLimit(float value) {
+        limit = clamp(value, 0.0f, 1.0f);
+        limitRamper.setImmediate(limit);
+    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case limitAddress:
-                limitRamper.set(clamp(value, (float)0.0, (float)1.0));
-                break;
-
-            case clippingStartPointAddress:
-                clippingStartPointRamper.set(clamp(value, (float)0.0, (float)1.0));
-                break;
-
-            case methodAddress:
-                methodRamper.set(clamp(value, (float)0, (float)2));
+                limitRamper.setUIValue(clamp(value, 0.0f, 1.0f));
                 break;
 
         }
@@ -81,13 +77,7 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case limitAddress:
-                return limitRamper.goal();
-
-            case clippingStartPointAddress:
-                return clippingStartPointRamper.goal();
-
-            case methodAddress:
-                return methodRamper.goal();
+                return limitRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -96,48 +86,35 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case limitAddress:
-                limitRamper.startRamp(clamp(value, (float)0.0, (float)1.0), duration);
-                break;
-
-            case clippingStartPointAddress:
-                clippingStartPointRamper.startRamp(clamp(value, (float)0.0, (float)1.0), duration);
-                break;
-
-            case methodAddress:
-                methodRamper.startRamp(clamp(value, (float)0, (float)2), duration);
+                limitRamper.startRamp(clamp(value, 0.0f, 1.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
-            double limit = double(limitRamper.getStep());
-            double clippingStartPoint = double(clippingStartPointRamper.getStep());
-            double method = double(methodRamper.getStep());
 
             int frameOffset = int(frameIndex + bufferOffset);
 
-            clip->lim = (float)limit;
-            clip->arg = (float)clippingStartPoint;
-            clip->meth = (float)method;
+            limit = limitRamper.getAndStep();
+            clip0->lim = (float)limit;
+            clip1->lim = (float)limit;
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
 
-                sp_clip_compute(sp, clip, in, out);
+                if (started) {
+                    if (channel == 0) {
+                        sp_clip_compute(sp, clip0, in, out);
+                    } else {
+                        sp_clip_compute(sp, clip1, in, out);
+                    }
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -146,20 +123,13 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
+    sp_clip *clip0;
+    sp_clip *clip1;
 
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
-    sp_clip *clip;
+    float limit = 1.0;
 
 public:
     bool started = true;
-    AKParameterRamper limitRamper = 1.0;
-    AKParameterRamper clippingStartPointRamper = 0.5;
-    AKParameterRamper methodRamper = 0;
+    bool resetted = false;
+    ParameterRamper limitRamper = 1.0;
 };
-
-#endif /* AKClipperDSPKernel_hpp */

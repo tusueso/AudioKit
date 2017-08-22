@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKPluckedStringDSPKernel_hpp
-#define AKPluckedStringDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -23,26 +22,19 @@ enum {
     amplitudeAddress = 1
 };
 
-class AKPluckedStringDSPKernel : public AKDSPKernel {
+class AKPluckedStringDSPKernel : public AKSoundpipeKernel, public AKOutputBuffered {
 public:
     // MARK: Member Functions
 
     AKPluckedStringDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
-
-        sampleRate = float(inSampleRate);
-
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
         sp_pluck_create(&pluck);
         sp_pluck_init(sp, pluck, 110);
         pluck->freq = 110;
         pluck->amp = 0.5;
     }
-
 
     void start() {
         started = true;
@@ -54,20 +46,21 @@ public:
 
     void destroy() {
         sp_pluck_destroy(&pluck);
-        sp_destroy(&sp);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
     }
 
     void setFrequency(float freq) {
         frequency = freq;
-        frequencyRamper.set(clamp(freq, (float)0, (float)22000));
+        frequencyRamper.setImmediate(freq);
     }
 
     void setAmplitude(float amp) {
         amplitude = amp;
-        amplitudeRamper.set(clamp(amp, (float)0, (float)1));
+        amplitudeRamper.setImmediate(amp);
     }
 
     void trigger() {
@@ -77,11 +70,11 @@ public:
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case frequencyAddress:
-                frequencyRamper.set(clamp(value, (float)0, (float)22000));
+                frequencyRamper.setUIValue(clamp(value, (float)0, (float)22000));
                 break;
 
             case amplitudeAddress:
-                amplitudeRamper.set(clamp(value, (float)0, (float)1));
+                amplitudeRamper.setUIValue(clamp(value, (float)0, (float)1));
                 break;
 
         }
@@ -90,10 +83,10 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case frequencyAddress:
-                return frequencyRamper.goal();
+                return frequencyRamper.getUIValue();
 
             case amplitudeAddress:
-                return amplitudeRamper.goal();
+                return amplitudeRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -112,20 +105,16 @@ public:
         }
     }
 
-    void setBuffers(AudioBufferList *outBufferList) {
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
+
             int frameOffset = int(frameIndex + bufferOffset);
 
-            frequency = double(frequencyRamper.getStep());
-            amplitude = double(amplitudeRamper.getStep());
-
-            pluck->freq = frequency;
-            pluck->amp = amplitude;
+            frequency = frequencyRamper.getAndStep();
+            pluck->freq = (float)frequency;
+            amplitude = amplitudeRamper.getAndStep();
+            pluck->amp = (float)amplitude;
 
             for (int channel = 0; channel < channels; ++channel) {
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
@@ -146,13 +135,8 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
     float internalTrigger = 0;
 
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
     sp_pluck *pluck;
 
     float frequency = 110;
@@ -160,8 +144,8 @@ private:
 
 public:
     bool started = false;
-    AKParameterRamper frequencyRamper = 110;
-    AKParameterRamper amplitudeRamper = 0.5;
+    bool resetted = false;
+    ParameterRamper frequencyRamper = 110;
+    ParameterRamper amplitudeRamper = 0.5;
 };
 
-#endif /* AKPluckedStringDSPKernel_hpp */

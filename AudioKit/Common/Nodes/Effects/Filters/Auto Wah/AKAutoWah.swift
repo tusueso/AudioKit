@@ -3,138 +3,147 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
-
-import AVFoundation
 
 /// An automatic wah effect, ported from Guitarix via Faust.
 ///
-/// - parameter input: Input node to process
-/// - parameter wah: Wah Amount
-/// - parameter mix: Dry/Wet Mix
-/// - parameter amplitude: Overall level
-///
-public class AKAutoWah: AKNode, AKToggleable {
+open class AKAutoWah: AKNode, AKToggleable, AKComponent {
+    public typealias AKAudioUnitType = AKAutoWahAudioUnit
+    /// Four letter unique description of the node
+    public static let ComponentDescription = AudioComponentDescription(effect: "awah")
 
     // MARK: - Properties
+    private var internalAU: AKAudioUnitType?
+    private var token: AUParameterObserverToken?
 
+    fileprivate var wahParameter: AUParameter?
+    fileprivate var mixParameter: AUParameter?
+    fileprivate var amplitudeParameter: AUParameter?
 
-    internal var internalAU: AKAutoWahAudioUnit?
-    internal var token: AUParameterObserverToken?
-
-    private var wahParameter: AUParameter?
-    private var mixParameter: AUParameter?
-    private var amplitudeParameter: AUParameter?
+    /// Ramp Time represents the speed at which parameters are allowed to change
+    open dynamic var rampTime: Double = AKSettings.rampTime {
+        willSet {
+            internalAU?.rampTime = rampTime
+        }
+    }
 
     /// Wah Amount
-    public var wah: Double = 0 {
-        willSet(newValue) {
+    open dynamic var wah: Double = 0.0 {
+        willSet {
             if wah != newValue {
-                wahParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        wahParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.wah = Float(newValue)
+                }
             }
         }
     }
+
     /// Dry/Wet Mix
-    public var mix: Double = 100 {
-        willSet(newValue) {
+    open dynamic var mix: Double = 1.0 {
+        willSet {
             if mix != newValue {
-                mixParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        mixParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.mix = Float(newValue)
+                }
             }
         }
     }
+
     /// Overall level
-    public var amplitude: Double = 0.1 {
-        willSet(newValue) {
+    open dynamic var amplitude: Double = 0.1 {
+        willSet {
             if amplitude != newValue {
-                amplitudeParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        amplitudeParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.amplitude = Float(newValue)
+                }
             }
         }
     }
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    public var isStarted: Bool {
-        return internalAU!.isPlaying()
+    open dynamic var isStarted: Bool {
+        return internalAU?.isPlaying() ?? false
     }
 
     // MARK: - Initialization
 
-    /// Initialize this Auto-Wah node
+    /// Initialize this autoWah node
     ///
-    /// - parameter input: Input node to process
-    /// - parameter wah: Wah Amount
-    /// - parameter mix: Dry/Wet Mix
-    /// - parameter amplitude: Overall level
+    /// - Parameters:
+    ///   - input: Input node to process
+    ///   - wah: Wah Amount
+    ///   - mix: Dry/Wet Mix
+    ///   - amplitude: Overall level
     ///
     public init(
-        _ input: AKNode,
-        wah: Double = 0,
-        mix: Double = 100,
+        _ input: AKNode?,
+        wah: Double = 0.0,
+        mix: Double = 1.0,
         amplitude: Double = 0.1) {
 
         self.wah = wah
         self.mix = mix
         self.amplitude = amplitude
 
-        var description = AudioComponentDescription()
-        description.componentType         = kAudioUnitType_Effect
-        description.componentSubType      = 0x61776168 /*'awah'*/
-        description.componentManufacturer = 0x41754b74 /*'AuKt'*/
-        description.componentFlags        = 0
-        description.componentFlagsMask    = 0
-
-        AUAudioUnit.registerSubclass(
-            AKAutoWahAudioUnit.self,
-            asComponentDescription: description,
-            name: "Local AKAutoWah",
-            version: UInt32.max)
+        _Self.register()
 
         super.init()
-        AVAudioUnit.instantiateWithComponentDescription(description, options: []) {
-            avAudioUnit, error in
+        AVAudioUnit._instantiate(with: _Self.ComponentDescription) { [weak self] avAudioUnit in
 
-            guard let avAudioUnitEffect = avAudioUnit else { return }
+            self?.avAudioNode = avAudioUnit
+            self?.internalAU = avAudioUnit.auAudioUnit as? AKAudioUnitType
 
-            self.avAudioNode = avAudioUnitEffect
-            self.internalAU = avAudioUnitEffect.AUAudioUnit as? AKAutoWahAudioUnit
-
-            AudioKit.engine.attachNode(self.avAudioNode)
-            input.addConnectionPoint(self)
+            input?.addConnectionPoint(self!)
         }
 
-        guard let tree = internalAU?.parameterTree else { return }
+        guard let tree = internalAU?.parameterTree else {
+            return
+        }
 
-        wahParameter       = tree.valueForKey("wah")       as? AUParameter
-        mixParameter       = tree.valueForKey("mix")       as? AUParameter
-        amplitudeParameter = tree.valueForKey("amplitude") as? AUParameter
+        wahParameter = tree["wah"]
+        mixParameter = tree["mix"]
+        amplitudeParameter = tree["amplitude"]
 
-        token = tree.tokenByAddingParameterObserver {
-            address, value in
+        token = tree.token(byAddingParameterObserver: { [weak self] address, value in
 
-            dispatch_async(dispatch_get_main_queue()) {
-                if address == self.wahParameter!.address {
-                    self.wah = Double(value)
-                } else if address == self.mixParameter!.address {
-                    self.mix = Double(value)
-                } else if address == self.amplitudeParameter!.address {
-                    self.amplitude = Double(value)
+            DispatchQueue.main.async {
+                if address == self?.wahParameter?.address {
+                    self?.wah = Double(value)
+                } else if address == self?.mixParameter?.address {
+                    self?.mix = Double(value)
+                } else if address == self?.amplitudeParameter?.address {
+                    self?.amplitude = Double(value)
                 }
             }
-        }
-        wahParameter?.setValue(Float(wah), originator: token!)
-        mixParameter?.setValue(Float(mix), originator: token!)
-        amplitudeParameter?.setValue(Float(amplitude), originator: token!)
+        })
+
+        internalAU?.wah = Float(wah)
+        internalAU?.mix = Float(mix)
+        internalAU?.amplitude = Float(amplitude)
     }
-    
+
     // MARK: - Control
 
     /// Function to start, play, or activate the node, all do the same thing
-    public func start() {
-        self.internalAU!.start()
+    open func start() {
+        internalAU?.start()
     }
 
     /// Function to stop or bypass the node, both are equivalent
-    public func stop() {
-        self.internalAU!.stop()
+    open func stop() {
+        internalAU?.stop()
     }
 }

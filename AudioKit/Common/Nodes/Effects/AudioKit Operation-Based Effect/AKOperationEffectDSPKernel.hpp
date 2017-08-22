@@ -3,14 +3,15 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2015 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKOperationEffectDSPKernel_hpp
-#define AKOperationEffectDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import <vector>
+
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -18,23 +19,24 @@ extern "C" {
 #include "plumber.h"
 }
 
+#import "AKCustomUgenInfo.h"
 
-class AKOperationEffectDSPKernel : public AKDSPKernel {
+class AKOperationEffectDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKOperationEffectDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
-
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
         plumber_register(&pd);
         plumber_init(&pd);
+
+        for (auto info : customUgens) {
+          plumber_ftmap_add_function(&pd, info.name, info.func, info.userData);
+        }
+
         pd.sp = sp;
         if (sporthCode != nil) {
             plumber_parse_string(&pd, sporthCode);
@@ -48,11 +50,15 @@ public:
     }
     
     void setParameters(float params[]) {
-        for (int i = 0; i < 16; i++) {
+        for (int i = 0; i < 14; i++) {
             parameters[i] = params[i];
         }
     };
-    
+
+    void addCustomUgen(AKCustomUgenInfo info) {
+        customUgens.push_back(info);
+    }
+
     void start() {
         started = true;
     }
@@ -63,7 +69,7 @@ public:
 
     void destroy() {
         plumber_clean(&pd);
-        sp_destroy(&sp);
+        AKSoundpipeKernel::destroy();
     }
     
     void reset() {
@@ -85,11 +91,6 @@ public:
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
         
         if (!started) {
@@ -97,8 +98,7 @@ public:
             outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
             return;
         }
-        
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
 
             int frameOffset = int(frameIndex + bufferOffset);
@@ -106,12 +106,12 @@ public:
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 if (channel < 2) {
-                    pd.p[channel] = *in;
+                    pd.p[channel+14] = *in;
                 }
             }
             
-            for (int i = 0; i < 16; i++) {
-                pd.p[i+2] = parameters[i];
+            for (int i = 0; i < 14; i++) {
+                pd.p[i] = parameters[i];
             }
             
             plumber_compute(&pd, PLUMBER_COMPUTE);
@@ -120,6 +120,10 @@ public:
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
                 *out = sporth_stack_pop_float(&pd.sporth.stack);
             }
+            
+            for (int i = 0; i < 14; i++) {
+                parameters[i] = pd.p[i];
+            }
         }
     }
 
@@ -127,18 +131,11 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
-    float parameters[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-    
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
     plumber_data pd;
     char *sporthCode = nil;
+    std::vector<AKCustomUgenInfo> customUgens;
 public:
+    float parameters[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0};
     bool started = true;
 };
 
-#endif /* AKOperationEffectDSPKernel_hpp */

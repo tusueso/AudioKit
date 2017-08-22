@@ -3,38 +3,35 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright © 2016 AudioKit. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
-
-import Foundation
-
 
 /// Minimum of two operations
 ///
-/// - returns: AKOperation
-/// - parameter x: 1st operation
-/// - parameter y: 2nd operation
+/// - Parameters:
+///   - x: 1st operation
+///   - y: 2nd operation
 ///
-public func min(x: AKComputedParameter, _ y: AKComputedParameter) -> AKOperation {
-    return AKOperation("(\(x.toMono()) \(y.toMono()) min)")
+public func min(_ x: AKComputedParameter, _ y: AKComputedParameter) -> AKOperation {
+    return AKOperation(module: "min", inputs: x.toMono(), y.toMono())
 }
 
 /// Minimum of an operation and a parameter
 ///
-/// - returns: AKOperation
-/// - parameter x: parameter
-/// - parameter y: operation
+/// - Parameters:
+///   - x: parameter
+///   - y: operation
 ///
-public func min(operation: AKComputedParameter, _ parameter: AKParameter) -> AKOperation {
-    return AKOperation("(\(operation.toMono()) \(parameter) min)")
+public func min(_ operation: AKComputedParameter, _ parameter: AKParameter) -> AKOperation {
+    return AKOperation(module: "min", inputs: operation.toMono(), parameter)
 }
 
 /// Minimum of an operation and a parameter
 ///
-/// - returns: AKOperation
-/// - parameter x: parameter
-/// - parameter y: operation
+/// - Parameters:
+///   - x: parameter
+///   - y: operation
 ///
-public func min(parameter: AKParameter, _ operation: AKComputedParameter) -> AKOperation {
+public func min(_ parameter: AKParameter, _ operation: AKComputedParameter) -> AKOperation {
     return min(operation, parameter)
 }

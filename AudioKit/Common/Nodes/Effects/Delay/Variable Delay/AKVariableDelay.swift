@@ -3,62 +3,77 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
-
-import AVFoundation
 
 /// A delay line with cubic interpolation.
 ///
-/// - parameter input: Input node to process
-/// - parameter time: Delay time (in seconds) that can be changed during performance. This value must not exceed the maximum delay time.
-/// - parameter feedback: Feedback amount. Should be a value between 0-1.
-/// - parameter maximumDelayTime: The maximum delay time, in seconds.
-///
-public class AKVariableDelay: AKNode, AKToggleable {
+open class AKVariableDelay: AKNode, AKToggleable, AKComponent {
+    public typealias AKAudioUnitType = AKVariableDelayAudioUnit
+    /// Four letter unique description of the node
+    public static let ComponentDescription = AudioComponentDescription(effect: "vdla")
 
     // MARK: - Properties
 
+    private var internalAU: AKAudioUnitType?
+    private var token: AUParameterObserverToken?
 
-    internal var internalAU: AKVariableDelayAudioUnit?
-    internal var token: AUParameterObserverToken?
+    fileprivate var timeParameter: AUParameter?
+    fileprivate var feedbackParameter: AUParameter?
 
-    private var timeParameter: AUParameter?
-    private var feedbackParameter: AUParameter?
+    /// Ramp Time represents the speed at which parameters are allowed to change
+    open dynamic var rampTime: Double = AKSettings.rampTime {
+        willSet {
+            internalAU?.rampTime = newValue
+        }
+    }
 
-    /// Delay time (in seconds) that can be changed during performance. This value must not exceed the maximum delay time.
-    public var time: Double = 1 {
-        willSet(newValue) {
+    /// Delay time (in seconds) that can be changed at any point. This value must not exceed the maximum delay time.
+    open dynamic var time: Double = 1 {
+        willSet {
             if time != newValue {
-                timeParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        timeParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.time = Float(newValue)
+                }
             }
         }
     }
     /// Feedback amount. Should be a value between 0-1.
-    public var feedback: Double = 0 {
-        willSet(newValue) {
+    open dynamic var feedback: Double = 0 {
+        willSet {
             if feedback != newValue {
-                feedbackParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        feedbackParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.feedback = Float(newValue)
+                }
             }
         }
     }
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    public var isStarted: Bool {
-        return internalAU!.isPlaying()
+    open dynamic var isStarted: Bool {
+        return internalAU?.isPlaying() ?? false
     }
 
     // MARK: - Initialization
 
     /// Initialize this delay node
     ///
-    /// - parameter input: Input node to process
-    /// - parameter time: Delay time (in seconds) that can be changed during performance. This value must not exceed the maximum delay time.
-    /// - parameter feedback: Feedback amount. Should be a value between 0-1.
-    /// - parameter maximumDelayTime: The maximum delay time, in seconds.
+    /// - Parameters:
+    ///   - input: Input node to process
+    ///   - time: Delay time (in seconds). This value must not exceed the maximum delay time.
+    ///   - feedback: Feedback amount. Should be a value between 0-1.
+    ///   - maximumDelayTime: The maximum delay time, in seconds.
     ///
     public init(
-        _ input: AKNode,
+        _ input: AKNode?,
         time: Double = 1,
         feedback: Double = 0,
         maximumDelayTime: Double = 5) {
@@ -66,61 +81,46 @@ public class AKVariableDelay: AKNode, AKToggleable {
         self.time = time
         self.feedback = feedback
 
-        var description = AudioComponentDescription()
-        description.componentType         = kAudioUnitType_Effect
-        description.componentSubType      = 0x76646c61 /*'vdla'*/
-        description.componentManufacturer = 0x41754b74 /*'AuKt'*/
-        description.componentFlags        = 0
-        description.componentFlagsMask    = 0
-
-        AUAudioUnit.registerSubclass(
-            AKVariableDelayAudioUnit.self,
-            asComponentDescription: description,
-            name: "Local AKVariableDelay",
-            version: UInt32.max)
-
+        _Self.register()
         super.init()
-        AVAudioUnit.instantiateWithComponentDescription(description, options: []) {
-            avAudioUnit, error in
+        AVAudioUnit._instantiate(with: _Self.ComponentDescription) { [weak self] avAudioUnit in
 
-            guard let avAudioUnitEffect = avAudioUnit else { return }
+            self?.avAudioNode = avAudioUnit
+            self?.internalAU = avAudioUnit.auAudioUnit as? AKAudioUnitType
 
-            self.avAudioNode = avAudioUnitEffect
-            self.internalAU = avAudioUnitEffect.AUAudioUnit as? AKVariableDelayAudioUnit
-
-            AudioKit.engine.attachNode(self.avAudioNode)
-            input.addConnectionPoint(self)
+            input?.addConnectionPoint(self!)
         }
 
-        guard let tree = internalAU?.parameterTree else { return }
+        guard let tree = internalAU?.parameterTree else {
+            return
+        }
 
-        timeParameter             = tree.valueForKey("time")             as? AUParameter
-        feedbackParameter         = tree.valueForKey("feedback")         as? AUParameter
+        timeParameter = tree["time"]
+        feedbackParameter = tree["feedback"]
 
-        token = tree.tokenByAddingParameterObserver {
-            address, value in
+        token = tree.token (byAddingParameterObserver: { [weak self] address, value in
 
-            dispatch_async(dispatch_get_main_queue()) {
-                if address == self.timeParameter!.address {
-                    self.time = Double(value)
-                } else if address == self.feedbackParameter!.address {
-                    self.feedback = Double(value)
+            DispatchQueue.main.async {
+                if address == self?.timeParameter?.address {
+                    self?.time = Double(value)
+                } else if address == self?.feedbackParameter?.address {
+                    self?.feedback = Double(value)
                 }
             }
-        }
-        timeParameter?.setValue(Float(time), originator: token!)
-        feedbackParameter?.setValue(Float(feedback), originator: token!)
+        })
+        internalAU?.time = Float(time)
+        internalAU?.feedback = Float(feedback)
     }
-    
+
     // MARK: - Control
 
     /// Function to start, play, or activate the node, all do the same thing
-    public func start() {
-        self.internalAU!.start()
+    open func start() {
+        internalAU?.start()
     }
 
     /// Function to stop or bypass the node, both are equivalent
-    public func stop() {
-        self.internalAU!.stop()
+    open func stop() {
+        internalAU?.stop()
     }
 }

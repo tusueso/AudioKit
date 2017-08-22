@@ -3,111 +3,97 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-import AVFoundation
+public typealias AKThresholdCallback = @convention(block) (Bool) -> Void
 
 /// Performs a "root-mean-square" on a signal to get overall amplitude of a
 /// signal. The output signal looks similar to that of a classic VU meter.
 ///
-/// - parameter input: Input node to process
-/// - parameter halfPowerPoint: Half-power point (in Hz) of internal lowpass filter.
-///
-public class AKAmplitudeTracker: AKNode, AKToggleable {
-
+open class AKAmplitudeTracker: AKNode, AKToggleable, AKComponent {
+    public typealias AKAudioUnitType = AKAmplitudeTrackerAudioUnit
+    /// Four letter unique description of the node
+    public static let ComponentDescription = AudioComponentDescription(effect: "rmsq")
 
     // MARK: - Properties
+    internal var internalAU: AKAudioUnitType?
+    private var token: AUParameterObserverToken?
 
-
-    internal var internalAU: AKAmplitudeTrackerAudioUnit?
-    internal var token: AUParameterObserverToken?
-
-    private var halfPowerPointParameter: AUParameter?
-
-    /// Half-power point (in Hz) of internal lowpass filter.
-    public var halfPowerPoint: Double = 10 {
-        willSet(newValue) {
-            if halfPowerPoint != newValue {
-                halfPowerPointParameter?.setValue(Float(newValue), originator: token!)
-            }
-        }
-    }
+    fileprivate var halfPowerPointParameter: AUParameter?
+//    open var smoothness: Double = 1 { // should be 0 and above
+//        willSet {
+//            internalAU?.smoothness = 0.05 * Float(newValue)
+//        }
+//    } //in development
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    public var isStarted: Bool {
-        return internalAU!.isPlaying()
+    open dynamic var isStarted: Bool {
+        return internalAU?.isPlaying() ?? false
     }
 
     /// Detected amplitude
-    public var amplitude: Double {
-        return Double(self.internalAU!.getAmplitude()) / sqrt(2.0) * 2.0
+    open dynamic var amplitude: Double {
+        if let amp = internalAU?.amplitude {
+            return Double(amp) / sqrt(2.0) * 2.0
+        } else {
+            return 0.0
+        }
+    }
+
+    /// Threshold amplitude
+    open dynamic var threshold: Double = 1 {
+        willSet {
+            internalAU?.threshold = Float(newValue)
+        }
     }
 
     // MARK: - Initialization
 
     /// Initialize this amplitude tracker node
     ///
-    /// - parameter input: Input node to process
-    /// - parameter halfPowerPoint: Half-power point (in Hz) of internal lowpass filter.
+    /// - Parameters:
+    ///   - input: Input node to process
+    ///   - halfPowerPoint: Half-power point (in Hz) of internal lowpass filter.
     ///
     public init(
-        _ input: AKNode,
-        halfPowerPoint: Double = 10) {
+        _ input: AKNode?,
+        halfPowerPoint: Double = 10,
+        threshold: Double = 1,
+        thresholdCallback: @escaping AKThresholdCallback = { _ in }) {
 
-        self.halfPowerPoint = halfPowerPoint
-
-        var description = AudioComponentDescription()
-        description.componentType         = kAudioUnitType_Effect
-        description.componentSubType      = 0x726d7371 /*'rmsq'*/
-        description.componentManufacturer = 0x41754b74 /*'AuKt'*/
-        description.componentFlags        = 0
-        description.componentFlagsMask    = 0
-
-        AUAudioUnit.registerSubclass(
-            AKAmplitudeTrackerAudioUnit.self,
-            asComponentDescription: description,
-            name: "Local AKAmplitudeTracker",
-            version: UInt32.max)
+        _Self.register()
 
         super.init()
-        AVAudioUnit.instantiateWithComponentDescription(description, options: []) {
-            avAudioUnit, error in
+        AVAudioUnit._instantiate(with: _Self.ComponentDescription) { [weak self] avAudioUnit in
 
-            guard let avAudioUnitEffect = avAudioUnit else { return }
+            self?.avAudioNode = avAudioUnit
+            self?.internalAU = avAudioUnit.auAudioUnit as? AKAudioUnitType
+            self!.internalAU!.thresholdCallback = thresholdCallback
 
-            self.avAudioNode = avAudioUnitEffect
-            self.internalAU = avAudioUnitEffect.AUAudioUnit as? AKAmplitudeTrackerAudioUnit
-
-            AudioKit.engine.attachNode(self.avAudioNode)
-            input.addConnectionPoint(self)
-        }
-
-        guard let tree = internalAU?.parameterTree else { return }
-
-        halfPowerPointParameter = tree.valueForKey("halfPowerPoint") as? AUParameter
-
-        token = tree.tokenByAddingParameterObserver {
-            address, value in
-
-            dispatch_async(dispatch_get_main_queue()) {
-                if address == self.halfPowerPointParameter!.address {
-                    self.halfPowerPoint = Double(value)
-                }
+            if let au = self?.internalAU {
+                au.setHalfPowerPoint(Float(halfPowerPoint))
             }
+
+            input?.addConnectionPoint(self!)
         }
-        halfPowerPointParameter?.setValue(Float(halfPowerPoint), originator: token!)
+
     }
-    
+
+    deinit {
+        AKLog("* AKAmplitudeTracker")
+    }
+
     // MARK: - Control
 
     /// Function to start, play, or activate the node, all do the same thing
-    public func start() {
-        internalAU!.start()
+    open func start() {
+        internalAU?.start()
     }
 
     /// Function to stop or bypass the node, both are equivalent
-    public func stop() {
-        internalAU!.stop()
+    open func stop() {
+        internalAU?.stop()
     }
+
 }

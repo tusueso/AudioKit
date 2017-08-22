@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKEqualizerFilterDSPKernel_hpp
-#define AKEqualizerFilterDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -24,25 +23,29 @@ enum {
     gainAddress = 2
 };
 
-class AKEqualizerFilterDSPKernel : public AKDSPKernel {
+class AKEqualizerFilterDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKEqualizerFilterDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
+        sp_eqfil_create(&eqfil0);
+        sp_eqfil_create(&eqfil1);
+        sp_eqfil_init(sp, eqfil0);
+        sp_eqfil_init(sp, eqfil1);
+        eqfil0->freq = 1000.0;
+        eqfil1->freq = 1000.0;
+        eqfil0->bw = 100.0;
+        eqfil1->bw = 100.0;
+        eqfil0->gain = 10.0;
+        eqfil1->gain = 10.0;
 
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_eqfil_create(&eqfil);
-        sp_eqfil_init(sp, eqfil);
-        eqfil->freq = 1000;
-        eqfil->bw = 100;
-        eqfil->gain = 10;
+        centerFrequencyRamper.init();
+        bandwidthRamper.init();
+        gainRamper.init();
     }
 
     void start() {
@@ -54,25 +57,46 @@ public:
     }
 
     void destroy() {
-        sp_eqfil_destroy(&eqfil);
-        sp_destroy(&sp);
+        sp_eqfil_destroy(&eqfil0);
+        sp_eqfil_destroy(&eqfil1);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        centerFrequencyRamper.reset();
+        bandwidthRamper.reset();
+        gainRamper.reset();
     }
+
+    void setCenterFrequency(float value) {
+        centerFrequency = clamp(value, 12.0f, 20000.0f);
+        centerFrequencyRamper.setImmediate(centerFrequency);
+    }
+
+    void setBandwidth(float value) {
+        bandwidth = clamp(value, 0.0f, 20000.0f);
+        bandwidthRamper.setImmediate(bandwidth);
+    }
+
+    void setGain(float value) {
+        gain = clamp(value, -100.0f, 100.0f);
+        gainRamper.setImmediate(gain);
+    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case centerFrequencyAddress:
-                centerFrequencyRamper.set(clamp(value, (float)12.0, (float)20000.0));
+                centerFrequencyRamper.setUIValue(clamp(value, 12.0f, 20000.0f));
                 break;
 
             case bandwidthAddress:
-                bandwidthRamper.set(clamp(value, (float)0.0, (float)20000.0));
+                bandwidthRamper.setUIValue(clamp(value, 0.0f, 20000.0f));
                 break;
 
             case gainAddress:
-                gainRamper.set(clamp(value, (float)-100.0, (float)100.0));
+                gainRamper.setUIValue(clamp(value, -100.0f, 100.0f));
                 break;
 
         }
@@ -81,13 +105,13 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case centerFrequencyAddress:
-                return centerFrequencyRamper.goal();
+                return centerFrequencyRamper.getUIValue();
 
             case bandwidthAddress:
-                return bandwidthRamper.goal();
+                return bandwidthRamper.getUIValue();
 
             case gainAddress:
-                return gainRamper.goal();
+                return gainRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -96,48 +120,49 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case centerFrequencyAddress:
-                centerFrequencyRamper.startRamp(clamp(value, (float)12.0, (float)20000.0), duration);
+                centerFrequencyRamper.startRamp(clamp(value, 12.0f, 20000.0f), duration);
                 break;
 
             case bandwidthAddress:
-                bandwidthRamper.startRamp(clamp(value, (float)0.0, (float)20000.0), duration);
+                bandwidthRamper.startRamp(clamp(value, 0.0f, 20000.0f), duration);
                 break;
 
             case gainAddress:
-                gainRamper.startRamp(clamp(value, (float)-100.0, (float)100.0), duration);
+                gainRamper.startRamp(clamp(value, -100.0f, 100.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
-            double centerFrequency = double(centerFrequencyRamper.getStep());
-            double bandwidth = double(bandwidthRamper.getStep());
-            double gain = double(gainRamper.getStep());
 
             int frameOffset = int(frameIndex + bufferOffset);
 
-            eqfil->freq = (float)centerFrequency;
-            eqfil->bw = (float)bandwidth;
-            eqfil->gain = (float)gain;
+            centerFrequency = centerFrequencyRamper.getAndStep();
+            eqfil0->freq = (float)centerFrequency;
+            eqfil1->freq = (float)centerFrequency;
+            bandwidth = bandwidthRamper.getAndStep();
+            eqfil0->bw = (float)bandwidth;
+            eqfil1->bw = (float)bandwidth;
+            gain = gainRamper.getAndStep();
+            eqfil0->gain = (float)gain;
+            eqfil1->gain = (float)gain;
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
 
-                sp_eqfil_compute(sp, eqfil, in, out);
+                if (started) {
+                    if (channel == 0) {
+                        sp_eqfil_compute(sp, eqfil0, in, out);
+                    } else {
+                        sp_eqfil_compute(sp, eqfil1, in, out);
+                    }
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -146,20 +171,17 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
+    sp_eqfil *eqfil0;
+    sp_eqfil *eqfil1;
 
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
-    sp_eqfil *eqfil;
+    float centerFrequency = 1000.0;
+    float bandwidth = 100.0;
+    float gain = 10.0;
 
 public:
     bool started = true;
-    AKParameterRamper centerFrequencyRamper = 1000;
-    AKParameterRamper bandwidthRamper = 100;
-    AKParameterRamper gainRamper = 10;
+    bool resetted = false;
+    ParameterRamper centerFrequencyRamper = 1000.0;
+    ParameterRamper bandwidthRamper = 100.0;
+    ParameterRamper gainRamper = 10.0;
 };
-
-#endif /* AKEqualizerFilterDSPKernel_hpp */

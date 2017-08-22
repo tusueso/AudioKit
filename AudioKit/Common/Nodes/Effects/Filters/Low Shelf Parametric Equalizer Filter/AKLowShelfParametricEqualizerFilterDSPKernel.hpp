@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKLowShelfParametricEqualizerFilterDSPKernel_hpp
-#define AKLowShelfParametricEqualizerFilterDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -24,26 +23,31 @@ enum {
     qAddress = 2
 };
 
-class AKLowShelfParametricEqualizerFilterDSPKernel : public AKDSPKernel {
+class AKLowShelfParametricEqualizerFilterDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKLowShelfParametricEqualizerFilterDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
+        sp_pareq_create(&pareq0);
+        sp_pareq_create(&pareq1);
+        sp_pareq_init(sp, pareq0);
+        sp_pareq_init(sp, pareq1);
+        pareq0->fc = 1000;
+        pareq1->fc = 1000;
+        pareq0->v = 1.0;
+        pareq1->v = 1.0;
+        pareq0->q = 0.707;
+        pareq1->q = 0.707;
+        pareq0->mode = 1;
+        pareq1->mode = 1;
 
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_pareq_create(&pareq);
-        sp_pareq_init(sp, pareq);
-        pareq->fc = 1000;
-        pareq->v = 1.0;
-        pareq->q = 0.707;
-        pareq->mode = 1;
+        cornerFrequencyRamper.init();
+        gainRamper.init();
+        qRamper.init();
     }
 
     void start() {
@@ -55,25 +59,46 @@ public:
     }
 
     void destroy() {
-        sp_pareq_destroy(&pareq);
-        sp_destroy(&sp);
+        sp_pareq_destroy(&pareq0);
+        sp_pareq_destroy(&pareq1);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        cornerFrequencyRamper.reset();
+        gainRamper.reset();
+        qRamper.reset();
     }
+
+    void setCornerFrequency(float value) {
+        cornerFrequency = clamp(value, 12.0f, 20000.0f);
+        cornerFrequencyRamper.setImmediate(cornerFrequency);
+    }
+
+    void setGain(float value) {
+        gain = clamp(value, 0.0f, 10.0f);
+        gainRamper.setImmediate(gain);
+    }
+
+    void setQ(float value) {
+        q = clamp(value, 0.0f, 2.0f);
+        qRamper.setImmediate(q);
+    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case cornerFrequencyAddress:
-                cornerFrequencyRamper.set(clamp(value, (float)12.0, (float)20000.0));
+                cornerFrequencyRamper.setUIValue(clamp(value, 12.0f, 20000.0f));
                 break;
 
             case gainAddress:
-                gainRamper.set(clamp(value, (float)0.0, (float)10.0));
+                gainRamper.setUIValue(clamp(value, 0.0f, 10.0f));
                 break;
 
             case qAddress:
-                qRamper.set(clamp(value, (float)0.0, (float)2.0));
+                qRamper.setUIValue(clamp(value, 0.0f, 2.0f));
                 break;
 
         }
@@ -82,13 +107,13 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case cornerFrequencyAddress:
-                return cornerFrequencyRamper.goal();
+                return cornerFrequencyRamper.getUIValue();
 
             case gainAddress:
-                return gainRamper.goal();
+                return gainRamper.getUIValue();
 
             case qAddress:
-                return qRamper.goal();
+                return qRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -97,48 +122,49 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case cornerFrequencyAddress:
-                cornerFrequencyRamper.startRamp(clamp(value, (float)12.0, (float)20000.0), duration);
+                cornerFrequencyRamper.startRamp(clamp(value, 12.0f, 20000.0f), duration);
                 break;
 
             case gainAddress:
-                gainRamper.startRamp(clamp(value, (float)0.0, (float)10.0), duration);
+                gainRamper.startRamp(clamp(value, 0.0f, 10.0f), duration);
                 break;
 
             case qAddress:
-                qRamper.startRamp(clamp(value, (float)0.0, (float)2.0), duration);
+                qRamper.startRamp(clamp(value, 0.0f, 2.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
-            double cornerFrequency = double(cornerFrequencyRamper.getStep());
-            double gain = double(gainRamper.getStep());
-            double q = double(qRamper.getStep());
 
             int frameOffset = int(frameIndex + bufferOffset);
 
-            pareq->fc = (float)cornerFrequency;
-            pareq->v = (float)gain;
-            pareq->q = (float)q;
+            cornerFrequency = cornerFrequencyRamper.getAndStep();
+            pareq0->fc = (float)cornerFrequency;
+            pareq1->fc = (float)cornerFrequency;
+            gain = gainRamper.getAndStep();
+            pareq0->v = (float)gain;
+            pareq1->v = (float)gain;
+            q = qRamper.getAndStep();
+            pareq0->q = (float)q;
+            pareq1->q = (float)q;
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
 
-                sp_pareq_compute(sp, pareq, in, out);
+                if (started) {
+                    if (channel == 0) {
+                        sp_pareq_compute(sp, pareq0, in, out);
+                    } else {
+                        sp_pareq_compute(sp, pareq1, in, out);
+                    }
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -147,20 +173,17 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
+    sp_pareq *pareq0;
+    sp_pareq *pareq1;
 
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
-    sp_pareq *pareq;
+    float cornerFrequency = 1000;
+    float gain = 1.0;
+    float q = 0.707;
 
 public:
     bool started = true;
-    AKParameterRamper cornerFrequencyRamper = 1000;
-    AKParameterRamper gainRamper = 1.0;
-    AKParameterRamper qRamper = 0.707;
+    bool resetted = false;
+    ParameterRamper cornerFrequencyRamper = 1000;
+    ParameterRamper gainRamper = 1.0;
+    ParameterRamper qRamper = 0.707;
 };
-
-#endif /* AKLowShelfParametricEqualizerFilterDSPKernel_hpp */

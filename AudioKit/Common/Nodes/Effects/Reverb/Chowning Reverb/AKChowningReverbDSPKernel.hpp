@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKChowningReverbDSPKernel_hpp
-#define AKChowningReverbDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -19,22 +18,19 @@ extern "C" {
 }
 
 
-class AKChowningReverbDSPKernel : public AKDSPKernel {
+class AKChowningReverbDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKChowningReverbDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
-
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_jcrev_create(&jcrev);
-        sp_jcrev_init(sp, jcrev);
+        sp_jcrev_create(&jcrev0);
+        sp_jcrev_init(sp, jcrev0);
+        sp_jcrev_create(&jcrev1);
+        sp_jcrev_init(sp, jcrev1);
     }
 
     void start() {
@@ -46,8 +42,9 @@ public:
     }
 
     void destroy() {
-        sp_jcrev_destroy(&jcrev);
-        sp_destroy(&sp);
+        sp_jcrev_destroy(&jcrev0);
+        sp_jcrev_destroy(&jcrev1);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
@@ -69,27 +66,25 @@ public:
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
 
             int frameOffset = int(frameIndex + bufferOffset);
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
-
-                sp_jcrev_compute(sp, jcrev, in, out);
+                
+                if (started) {
+                    if (channel == 0) {
+                        sp_jcrev_compute(sp, jcrev0, in, out);
+                    } else {
+                        sp_jcrev_compute(sp, jcrev1, in, out);
+                    }
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -98,17 +93,11 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
-
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
-    sp_jcrev *jcrev;
+    sp_jcrev *jcrev0;
+    sp_jcrev *jcrev1;
 
 public:
     bool started = true;
+    bool resetted = true;
 };
 
-#endif /* AKChowningReverbDSPKernel_hpp */

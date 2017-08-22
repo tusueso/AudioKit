@@ -12,7 +12,7 @@ class Conductor: AKMIDIListener {
     /// Globally accessible singleton
     static let sharedInstance = Conductor()
 
-    var core = CoreInstrument(voiceCount: 5)
+    var core = GeneratorBank()
     var bitCrusher: AKBitCrusher
     var fatten: Fatten
     var filterSection: FilterSection
@@ -23,8 +23,10 @@ class Conductor: AKMIDIListener {
     var reverb: AKCostelloReverb
     var reverbMixer: AKDryWetMixer
 
+    var midiBendRange: Double = 2.0
 
     init() {
+        AKSettings.audioInputEnabled = true
         bitCrusher = AKBitCrusher(core)
         bitCrusher.stop()
 
@@ -41,19 +43,34 @@ class Conductor: AKMIDIListener {
 
         reverbMixer = AKDryWetMixer(masterVolume, reverb, balance: 0.0)
 
+        // uncomment this to allow background operation
+        // AKSettings.playbackWhileMuted = true
+
         AudioKit.output = reverbMixer
         AudioKit.start()
+        Audiobus.start()
 
         let midi = AKMIDI()
-        midi.openMIDIIn("Session 1")
+        midi.createVirtualPorts()
+        midi.openInput("Session 1")
         midi.addListener(self)
     }
-    
-    func midiNoteOn(note: Int, velocity: Int, channel: Int) {
-        core.playNote(note, velocity: velocity)
+
+    // MARK: - AKMIDIListener protocol functions
+
+    func receivedMIDINoteOn(noteNumber: MIDINoteNumber,
+                            velocity: MIDIVelocity,
+                            channel: MIDIChannel) {
+        core.play(noteNumber: noteNumber, velocity: velocity)
     }
-    func midiNoteOff(note: Int, velocity: Int, channel: Int) {
-        core.stopNote(note)
+    func receivedMIDINoteOff(noteNumber: MIDINoteNumber,
+                             velocity: MIDIVelocity,
+                             channel: MIDIChannel) {
+        core.stop(noteNumber: noteNumber)
+    }
+    func receivedMIDIPitchWheel(_ pitchWheelValue: MIDIWord, channel: MIDIChannel) {
+        let bendSemi = (Double(pitchWheelValue - 8_192) / 8_192.0) * midiBendRange
+        core.globalbend = bendSemi
     }
 
 }

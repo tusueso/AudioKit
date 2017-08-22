@@ -3,139 +3,106 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
-
-import AVFoundation
 
 /// AudioKit version of Apple's Decimator from the Distortion Audio Unit
 ///
-/// - parameter input: Input node to process
-/// - parameter decimation: Decimation (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-/// - parameter rounding: Rounding (Normalized Value) ranges from 0 to 1 (Default: 0)
-/// - parameter mix: Mix (Normalized Value) ranges from 0 to 1 (Default: 1)
-///
-public class AKDecimator: AKNode, AKToggleable {
-    
+open class AKDecimator: AKNode, AKToggleable, AUEffect {
     // MARK: - Properties
 
-    private let cd = AudioComponentDescription(
-        componentType: kAudioUnitType_Effect,
-        componentSubType: kAudioUnitSubType_Distortion,
-        componentManufacturer: kAudioUnitManufacturer_Apple,
-        componentFlags: 0,
-        componentFlagsMask: 0)
+    /// Four letter unique description of the node
+    public static let ComponentDescription = AudioComponentDescription(appleEffect: kAudioUnitSubType_Distortion)
 
-    internal var internalEffect = AVAudioUnitEffect()
-    internal var internalAU = AudioUnit()
-    
+    private var au: AUWrapper
     private var lastKnownMix: Double = 1
-    
+
     /// Decimation (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    public var decimation: Double = 0.5 {
+    open dynamic var decimation: Double = 0.5 {
         didSet {
-            if decimation < 0 {
-                decimation = 0
-            }            
-            if decimation > 1 {
-                decimation = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_Decimation,
-                kAudioUnitScope_Global, 0,
-                Float(decimation) * 100.0, 0)
+            decimation = (0...1).clamp(decimation)
+            au[kDistortionParam_Decimation] = decimation * 100
         }
     }
 
     /// Rounding (Normalized Value) ranges from 0 to 1 (Default: 0)
-    public var rounding: Double = 0 {
+    open dynamic var rounding: Double = 0 {
         didSet {
-            if rounding < 0 {
-                rounding = 0
-            }            
-            if rounding > 1 {
-                rounding = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_Rounding,
-                kAudioUnitScope_Global, 0,
-                Float(rounding) * 100.0, 0)
+            rounding = (0...1).clamp(rounding)
+            au[kDistortionParam_Rounding] = rounding * 100
         }
     }
-    
+
     /// Mix (Normalized Value) ranges from 0 to 1 (Default: 1)
-    public var mix: Double = 1 {
+    open dynamic var mix: Double = 1 {
         didSet {
-            if mix < 0 {
-                mix = 0
-            }
-            if mix > 1 {
-                mix = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_FinalMix,
-                kAudioUnitScope_Global, 0,
-                Float(mix) * 100.0, 0)
+            mix = (0...1).clamp(mix)
+            au[kDistortionParam_FinalMix] = mix * 100
         }
     }
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    public var isStarted = true
-    
+    open dynamic var isStarted = true
+
     // MARK: - Initialization
 
     /// Initialize the decimator node
     ///
-    /// - parameter input: Input node to process
-    /// - parameter decimation: Decimation (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    /// - parameter rounding: Rounding (Normalized Value) ranges from 0 to 1 (Default: 0)
-    /// - parameter mix: Mix (Normalized Value) ranges from 0 to 1 (Default: 1)
+    /// - Parameters:
+    ///   - input: Input node to process
+    ///   - decimation: Decimation (Normalized Value) ranges from 0 to 1 (Default: 0.5)
+    ///   - rounding: Rounding (Normalized Value) ranges from 0 to 1 (Default: 0)
+    ///   - mix: Mix (Normalized Value) ranges from 0 to 1 (Default: 1)
     ///
     public init(
-        _ input: AKNode,
+        _ input: AKNode?,
         decimation: Double = 0.5,
         rounding: Double = 0,
         mix: Double = 1) {
-            
+
             self.decimation = decimation
             self.rounding = rounding
             self.mix = mix
-            
-            internalEffect = AVAudioUnitEffect(audioComponentDescription: cd)
-            super.init()
-            
-            avAudioNode = internalEffect
-            AudioKit.engine.attachNode(self.avAudioNode)
-            input.addConnectionPoint(self)
-            internalAU = internalEffect.audioUnit
-            
+
+            let effect = _Self.effect
+            au = AUWrapper(effect)
+            super.init(avAudioNode: effect, attach: true)
+
+            input?.addConnectionPoint(self)
+
             // Since this is the Decimator, mix it to 100% and use the final mix as the mix parameter
-            AudioUnitSetParameter(internalAU, kDistortionParam_DecimationMix, kAudioUnitScope_Global, 0, 100, 0)
-            
-            AudioUnitSetParameter(internalAU, kDistortionParam_Decimation, kAudioUnitScope_Global, 0, Float(decimation) * 100.0, 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_Rounding, kAudioUnitScope_Global, 0, Float(rounding) * 100.0, 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_FinalMix, kAudioUnitScope_Global, 0, Float(mix) * 100.0, 0)
+
+            au[kDistortionParam_Decimation] = decimation * 100
+            au[kDistortionParam_Rounding] = rounding * 100
+            au[kDistortionParam_FinalMix] = mix * 100
+
+            au[kDistortionParam_PolynomialMix] = 0
+            au[kDistortionParam_RingModMix] = 0
+            au[kDistortionParam_DelayMix] = 0
     }
-    
+
     // MARK: - Control
-    
+
     /// Function to start, play, or activate the node, all do the same thing
-    public func start() {
+    open func start() {
         if isStopped {
             mix = lastKnownMix
             isStarted = true
         }
     }
-    
+
     /// Function to stop or bypass the node, both are equivalent
-    public func stop() {
+    open func stop() {
         if isPlaying {
             lastKnownMix = mix
             mix = 0
             isStarted = false
         }
+    }
+
+    /// Disconnect the node
+    override open func disconnect() {
+        stop()
+        disconnect(nodes: [self.avAudioNode])
     }
 }

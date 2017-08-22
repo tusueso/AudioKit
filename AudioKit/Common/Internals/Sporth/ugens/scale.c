@@ -13,23 +13,26 @@ int sporth_scale(sporth_stack *stack, void *ud)
         case PLUMBER_CREATE:
 
 #ifdef DEBUG_MODE
-            fprintf(stderr, "scale: Creating\n");
+            plumber_print(pd, "scale: Creating\n");
 #endif
 
             sp_scale_create(&scale);
             plumber_add_ugen(pd, SPORTH_SCALE, scale);
+            if(sporth_check_args(stack, "fff") != SPORTH_OK) {
+                plumber_print(pd,"Not enough arguments for scale\n");
+                stack->error++;
+                return PLUMBER_NOTOK;
+            }
+            max = sporth_stack_pop_float(stack);
+            min = sporth_stack_pop_float(stack);
+            in = sporth_stack_pop_float(stack);
+            sporth_stack_push_float(stack, 0);
             break;
         case PLUMBER_INIT:
 
 #ifdef DEBUG_MODE
-            fprintf(stderr, "scale: Initialising\n");
+            plumber_print(pd, "scale: Initialising\n");
 #endif
-
-            if(sporth_check_args(stack, "fff") != SPORTH_OK) {
-                fprintf(stderr,"Not enough arguments for scale\n");
-                stack->error++;
-                return PLUMBER_NOTOK;
-            }
             max = sporth_stack_pop_float(stack);
             min = sporth_stack_pop_float(stack);
             in = sporth_stack_pop_float(stack);
@@ -38,11 +41,6 @@ int sporth_scale(sporth_stack *stack, void *ud)
             sporth_stack_push_float(stack, 0);
             break;
         case PLUMBER_COMPUTE:
-            if(sporth_check_args(stack, "fff") != SPORTH_OK) {
-                fprintf(stderr,"Not enough arguments for scale\n");
-                stack->error++;
-                return PLUMBER_NOTOK;
-            }
             max = sporth_stack_pop_float(stack);
             min = sporth_stack_pop_float(stack);
             in = sporth_stack_pop_float(stack);
@@ -57,7 +55,7 @@ int sporth_scale(sporth_stack *stack, void *ud)
             sp_scale_destroy(&scale);
             break;
         default:
-            fprintf(stderr, "scale: Uknown mode!\n");
+            plumber_print(pd, "scale: Unknown mode!\n");
             break;
     }
     return PLUMBER_OK;

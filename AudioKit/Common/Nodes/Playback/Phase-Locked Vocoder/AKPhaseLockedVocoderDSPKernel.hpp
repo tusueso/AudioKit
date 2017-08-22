@@ -3,14 +3,12 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKPhaseLockedVocoderDSPKernel_hpp
-#define AKPhaseLockedVocoderDSPKernel_hpp
-
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#pragma once
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -24,26 +22,25 @@ enum {
     pitchRatioAddress = 2
 };
 
-class AKPhaseLockedVocoderDSPKernel : public AKDSPKernel {
+class AKPhaseLockedVocoderDSPKernel : public AKSoundpipeKernel, public AKOutputBuffered {
 public:
     // MARK: Member Functions
 
     AKPhaseLockedVocoderDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
         sp_mincer_create(&mincer);
 
+        positionRamper.init();
+        amplitudeRamper.init();
+        pitchRatioRamper.init();
     }
 
     void start() {
         started = true;
-        sp_mincer_init(sp, mincer, ftbl);
+        sp_mincer_init(sp, mincer, ftbl, 2048);
         mincer->time = 0;
         mincer->amp = 1;
         mincer->pitch = 1;
@@ -61,40 +58,44 @@ public:
 
     void destroy() {
         sp_mincer_destroy(&mincer);
-        sp_destroy(&sp);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        positionRamper.reset();
+        amplitudeRamper.reset();
+        pitchRatioRamper.reset();
     }
 
-    void setPosition(float time) {
-        position = time;
-        positionRamper.set(clamp(time, (float)0, (float)1000000));
+    void setPosition(float value) {
+        position = value;
+        positionRamper.setImmediate(position);
     }
 
-    void setAmplitude(float amp) {
-        amplitude = amp;
-        amplitudeRamper.set(clamp(amp, (float)0, (float)1));
+    void setAmplitude(float value) {
+        amplitude = clamp(value, 0.0f, 1.0f);
+        amplitudeRamper.setImmediate(amplitude);
     }
 
-    void setPitchratio(float pitch) {
-        pitchRatio = pitch;
-        pitchRatioRamper.set(clamp(pitch, (float)-1000, (float)1000));
+    void setPitchRatio(float value) {
+        pitchRatio = clamp(value, 0.0f, 1000.0f);
+        pitchRatioRamper.setImmediate(pitchRatio);
     }
 
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case positionAddress:
-                positionRamper.set(clamp(value, (float)0, (float)1000000));
+                positionRamper.setUIValue(value);
                 break;
 
             case amplitudeAddress:
-                amplitudeRamper.set(clamp(value, (float)0, (float)1));
+                amplitudeRamper.setUIValue(clamp(value, 0.0f, 1.0f));
                 break;
 
             case pitchRatioAddress:
-                pitchRatioRamper.set(clamp(value, (float)-1000, (float)1000));
+                pitchRatioRamper.setUIValue(clamp(value, 0.0f, 1000.0f));
                 break;
 
         }
@@ -103,13 +104,13 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case positionAddress:
-                return positionRamper.goal();
+                return positionRamper.getUIValue();
 
             case amplitudeAddress:
-                return amplitudeRamper.goal();
+                return amplitudeRamper.getUIValue();
 
             case pitchRatioAddress:
-                return pitchRatioRamper.goal();
+                return pitchRatioRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -118,32 +119,29 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case positionAddress:
-                positionRamper.startRamp(clamp(value, (float)0, (float)1000000), duration);
+                positionRamper.startRamp(value, duration);
                 break;
 
             case amplitudeAddress:
-                amplitudeRamper.startRamp(clamp(value, (float)0, (float)1), duration);
+                amplitudeRamper.startRamp(clamp(value, 0.0f, 1.0f), duration);
                 break;
 
             case pitchRatioAddress:
-                pitchRatioRamper.startRamp(value, duration);
+                pitchRatioRamper.startRamp(clamp(value, 0.0f, 1000.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *outBufferList) {
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
+
             int frameOffset = int(frameIndex + bufferOffset);
             
-            position = double(positionRamper.getStep());
-            amplitude = double(amplitudeRamper.getStep());
-            pitchRatio = double(pitchRatioRamper.getStep());
+            position = double(positionRamper.getAndStep());
+            amplitude = double(amplitudeRamper.getAndStep());
+            pitchRatio = double(pitchRatioRamper.getAndStep());
 
             mincer->time = position;
             mincer->amp = amplitude;
@@ -167,12 +165,6 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
-
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
     sp_mincer *mincer;
     sp_ftbl *ftbl;
     UInt32 ftbl_size = 4096;
@@ -183,9 +175,10 @@ private:
 
 public:
     bool started = false;
-    AKParameterRamper positionRamper = 0;
-    AKParameterRamper amplitudeRamper = 1;
-    AKParameterRamper pitchRatioRamper = 1;
+    bool resetted = false;
+    ParameterRamper positionRamper = 0;
+    ParameterRamper amplitudeRamper = 1;
+    ParameterRamper pitchRatioRamper = 1;
 };
 
-#endif /* AKPhaseLockedVocoderDSPKernel_hpp */
+

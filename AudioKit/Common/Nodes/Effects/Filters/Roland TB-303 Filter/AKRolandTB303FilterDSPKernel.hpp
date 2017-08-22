@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKRolandTB303FilterDSPKernel_hpp
-#define AKRolandTB303FilterDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -25,26 +24,32 @@ enum {
     resonanceAsymmetryAddress = 3
 };
 
-class AKRolandTB303FilterDSPKernel : public AKDSPKernel {
+class AKRolandTB303FilterDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKRolandTB303FilterDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
+        sp_tbvcf_create(&tbvcf0);
+        sp_tbvcf_create(&tbvcf1);
+        sp_tbvcf_init(sp, tbvcf0);
+        sp_tbvcf_init(sp, tbvcf1);
+        tbvcf0->fco = 500;
+        tbvcf1->fco = 500;
+        tbvcf0->res = 0.5;
+        tbvcf1->res = 0.5;
+        tbvcf0->dist = 2.0;
+        tbvcf1->dist = 2.0;
+        tbvcf0->asym = 0.5;
+        tbvcf1->asym = 0.5;
 
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_tbvcf_create(&tbvcf);
-        sp_tbvcf_init(sp, tbvcf);
-        tbvcf->fco = 500;
-        tbvcf->res = 0.5;
-        tbvcf->dist = 2.0;
-        tbvcf->asym = 0.5;
+        cutoffFrequencyRamper.init();
+        resonanceRamper.init();
+        distortionRamper.init();
+        resonanceAsymmetryRamper.init();
     }
 
     void start() {
@@ -56,29 +61,56 @@ public:
     }
 
     void destroy() {
-        sp_tbvcf_destroy(&tbvcf);
-        sp_destroy(&sp);
+        sp_tbvcf_destroy(&tbvcf0);
+        sp_tbvcf_destroy(&tbvcf1);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        cutoffFrequencyRamper.reset();
+        resonanceRamper.reset();
+        distortionRamper.reset();
+        resonanceAsymmetryRamper.reset();
     }
+
+    void setCutoffFrequency(float value) {
+        cutoffFrequency = clamp(value, 12.0f, 20000.0f);
+        cutoffFrequencyRamper.setImmediate(cutoffFrequency);
+    }
+
+    void setResonance(float value) {
+        resonance = clamp(value, 0.0f, 2.0f);
+        resonanceRamper.setImmediate(resonance);
+    }
+
+    void setDistortion(float value) {
+        distortion = clamp(value, 0.0f, 4.0f);
+        distortionRamper.setImmediate(distortion);
+    }
+
+    void setResonanceAsymmetry(float value) {
+        resonanceAsymmetry = clamp(value, 0.0f, 1.0f);
+        resonanceAsymmetryRamper.setImmediate(resonanceAsymmetry);
+    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case cutoffFrequencyAddress:
-                cutoffFrequencyRamper.set(clamp(value, (float)12.0, (float)20000.0));
+                cutoffFrequencyRamper.setUIValue(clamp(value, 12.0f, 20000.0f));
                 break;
 
             case resonanceAddress:
-                resonanceRamper.set(clamp(value, (float)0.0, (float)2.0));
+                resonanceRamper.setUIValue(clamp(value, 0.0f, 2.0f));
                 break;
 
             case distortionAddress:
-                distortionRamper.set(clamp(value, (float)0.0, (float)4.0));
+                distortionRamper.setUIValue(clamp(value, 0.0f, 4.0f));
                 break;
 
             case resonanceAsymmetryAddress:
-                resonanceAsymmetryRamper.set(clamp(value, (float)0.0, (float)1.0));
+                resonanceAsymmetryRamper.setUIValue(clamp(value, 0.0f, 1.0f));
                 break;
 
         }
@@ -87,16 +119,16 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case cutoffFrequencyAddress:
-                return cutoffFrequencyRamper.goal();
+                return cutoffFrequencyRamper.getUIValue();
 
             case resonanceAddress:
-                return resonanceRamper.goal();
+                return resonanceRamper.getUIValue();
 
             case distortionAddress:
-                return distortionRamper.goal();
+                return distortionRamper.getUIValue();
 
             case resonanceAsymmetryAddress:
-                return resonanceAsymmetryRamper.goal();
+                return resonanceAsymmetryRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -105,54 +137,56 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case cutoffFrequencyAddress:
-                cutoffFrequencyRamper.startRamp(clamp(value, (float)12.0, (float)20000.0), duration);
+                cutoffFrequencyRamper.startRamp(clamp(value, 12.0f, 20000.0f), duration);
                 break;
 
             case resonanceAddress:
-                resonanceRamper.startRamp(clamp(value, (float)0.0, (float)2.0), duration);
+                resonanceRamper.startRamp(clamp(value, 0.0f, 2.0f), duration);
                 break;
 
             case distortionAddress:
-                distortionRamper.startRamp(clamp(value, (float)0.0, (float)4.0), duration);
+                distortionRamper.startRamp(clamp(value, 0.0f, 4.0f), duration);
                 break;
 
             case resonanceAsymmetryAddress:
-                resonanceAsymmetryRamper.startRamp(clamp(value, (float)0.0, (float)1.0), duration);
+                resonanceAsymmetryRamper.startRamp(clamp(value, 0.0f, 1.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
-            double cutoffFrequency = double(cutoffFrequencyRamper.getStep());
-            double resonance = double(resonanceRamper.getStep());
-            double distortion = double(distortionRamper.getStep());
-            double resonanceAsymmetry = double(resonanceAsymmetryRamper.getStep());
 
             int frameOffset = int(frameIndex + bufferOffset);
 
-            tbvcf->fco = (float)cutoffFrequency;
-            tbvcf->res = (float)resonance;
-            tbvcf->dist = (float)distortion;
-            tbvcf->asym = (float)resonanceAsymmetry;
+            cutoffFrequency = cutoffFrequencyRamper.getAndStep();
+            tbvcf0->fco = (float)cutoffFrequency;
+            tbvcf1->fco = (float)cutoffFrequency;
+            resonance = resonanceRamper.getAndStep();
+            tbvcf0->res = (float)resonance;
+            tbvcf1->res = (float)resonance;
+            distortion = distortionRamper.getAndStep();
+            tbvcf0->dist = (float)distortion;
+            tbvcf1->dist = (float)distortion;
+            resonanceAsymmetry = resonanceAsymmetryRamper.getAndStep();
+            tbvcf0->asym = (float)resonanceAsymmetry;
+            tbvcf1->asym = (float)resonanceAsymmetry;
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
 
-                sp_tbvcf_compute(sp, tbvcf, in, out);
+                if (started) {
+                    if (channel == 0) {
+                        sp_tbvcf_compute(sp, tbvcf0, in, out);
+                    } else {
+                        sp_tbvcf_compute(sp, tbvcf1, in, out);
+                    }
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -161,21 +195,19 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
+    sp_tbvcf *tbvcf0;
+    sp_tbvcf *tbvcf1;
 
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
-    sp_tbvcf *tbvcf;
+    float cutoffFrequency = 500;
+    float resonance = 0.5;
+    float distortion = 2.0;
+    float resonanceAsymmetry = 0.5;
 
 public:
     bool started = true;
-    AKParameterRamper cutoffFrequencyRamper = 500;
-    AKParameterRamper resonanceRamper = 0.5;
-    AKParameterRamper distortionRamper = 2.0;
-    AKParameterRamper resonanceAsymmetryRamper = 0.5;
+    bool resetted = false;
+    ParameterRamper cutoffFrequencyRamper = 500;
+    ParameterRamper resonanceRamper = 0.5;
+    ParameterRamper distortionRamper = 2.0;
+    ParameterRamper resonanceAsymmetryRamper = 0.5;
 };
-
-#endif /* AKRolandTB303FilterDSPKernel_hpp */

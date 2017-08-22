@@ -3,10 +3,8 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright © 2016 AudioKit. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
-
-import Foundation
 
 extension AKComputedParameter {
 
@@ -18,11 +16,7 @@ extension AKComputedParameter {
     /// three series allpass units, followed by four parallel comb filters, and two
     /// decorrelation delay lines in parallel at the output.
     ///
-    /// - returns: AKComputedParameter
-    /// - parameter input: Input audio signal
-     ///
-    public func reverberateWithChowning(
-        ) -> AKOperation {
-            return AKOperation("(\(self.toMono()) jcrev)")
+    public func reverberateWithChowning() -> AKOperation {
+        return AKOperation(module: "jcrev", inputs: toMono())
     }
 }

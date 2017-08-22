@@ -4,7 +4,7 @@
 typedef struct {
     sp_oscmorph *data;
     sp_ftbl **ft;
-    char **ftname;
+    const char **ftname;
     int nft;
     SPFLOAT phase;
     SPFLOAT freq;
@@ -31,11 +31,12 @@ static int search_for_ft(plumber_data *pd, sporth_oscmorph *om)
     return PLUMBER_OK;
 }
 
+/*TODO: remove */
 static void free_strings(sporth_oscmorph *om)
 {
     int n;
     for(n = 0; n < om->nft; n++) {
-        free(om->ftname[n]);
+
     }
 }
 
@@ -65,7 +66,7 @@ int sporth_oscmorph4(sporth_stack *stack, void *ud)
         case PLUMBER_CREATE:
 
 #ifdef DEBUG_MODE
-            fprintf(stderr, "oscmorph: Creating\n");
+            plumber_print(pd, "oscmorph: Creating\n");
 #endif
             oscmorph = malloc(sizeof(sporth_oscmorph));
             sp_oscmorph_create(&oscmorph->data);
@@ -75,7 +76,7 @@ int sporth_oscmorph4(sporth_stack *stack, void *ud)
             plumber_add_ugen(pd, SPORTH_OSCMORPH4, oscmorph);
 
             if(sporth_check_args(stack, "ffffssss") != SPORTH_OK) {
-                fprintf(stderr,"Not enough arguments for oscmorph\n");
+                plumber_print(pd,"Not enough arguments for oscmorph\n");
                 stack->error++;
                 return PLUMBER_NOTOK;
             }
@@ -94,7 +95,7 @@ int sporth_oscmorph4(sporth_stack *stack, void *ud)
         case PLUMBER_INIT:
 
 #ifdef DEBUG_MODE
-            fprintf(stderr, "oscmorph: Initialising\n");
+            plumber_print(pd, "oscmorph: Initialising\n");
 #endif
 
             oscmorph = pd->last->ud;
@@ -124,13 +125,13 @@ int sporth_oscmorph4(sporth_stack *stack, void *ud)
             free(oscmorph);
             break;
         default:
-            fprintf(stderr, "oscmorph: Uknown mode!\n");
+            plumber_print(pd, "oscmorph: Unknown mode!\n");
             break;
     }
     return PLUMBER_OK;
 }
 
-
+/*TODO: remove malloc from here */
 int sporth_oscmorph2(sporth_stack *stack, void *ud)
 {
     plumber_data *pd = ud;
@@ -141,7 +142,7 @@ int sporth_oscmorph2(sporth_stack *stack, void *ud)
         case PLUMBER_CREATE:
 
 #ifdef DEBUG_MODE
-            fprintf(stderr, "oscmorph2: Creating\n");
+            plumber_print(pd, "oscmorph2: Creating\n");
 #endif
             oscmorph = malloc(sizeof(sporth_oscmorph));
             sp_oscmorph_create(&oscmorph->data);
@@ -151,7 +152,7 @@ int sporth_oscmorph2(sporth_stack *stack, void *ud)
             plumber_add_ugen(pd, SPORTH_OSCMORPH2, oscmorph);
 
             if(sporth_check_args(stack, "ffffss") != SPORTH_OK) {
-                fprintf(stderr,"Oscmorph2: not enough arguments\n");
+                plumber_print(pd,"Oscmorph2: not enough arguments\n");
                 stack->error++;
                 return PLUMBER_NOTOK;
             }
@@ -170,7 +171,7 @@ int sporth_oscmorph2(sporth_stack *stack, void *ud)
         case PLUMBER_INIT:
 
 #ifdef DEBUG_MODE
-            fprintf(stderr, "oscmorph2: Initialising\n");
+            plumber_print(pd, "oscmorph2: Initialising\n");
 #endif
 
             oscmorph = pd->last->ud;
@@ -200,7 +201,7 @@ int sporth_oscmorph2(sporth_stack *stack, void *ud)
             free(oscmorph);
             break;
         default:
-            fprintf(stderr, "oscmorph2: Uknown mode!\n");
+            plumber_print(pd, "oscmorph2: Unknown mode!\n");
             break;
     }
     return PLUMBER_OK;

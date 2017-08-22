@@ -3,82 +3,108 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
-
-import AVFoundation
 
 /// Distortion using a modified hyperbolic tangent function.
 ///
-/// - parameter input: Input node to process
-/// - parameter pregain: Determines the amount of gain applied to the signal before waveshaping. A value of 1 gives slight distortion.
-/// - parameter postgain: Gain applied after waveshaping
-/// - parameter postiveShapeParameter: Shape of the positive part of the signal. A value of 0 gets a flat clip.
-/// - parameter negativeShapeParameter: Like the positive shape parameter, only for the negative part.
-///
-public class AKTanhDistortion: AKNode, AKToggleable {
+open class AKTanhDistortion: AKNode, AKToggleable, AKComponent {
+    public typealias AKAudioUnitType = AKTanhDistortionAudioUnit
+    /// Four letter unique description of the node
+    public static let ComponentDescription = AudioComponentDescription(effect: "dist")
 
     // MARK: - Properties
 
+    private var internalAU: AKAudioUnitType?
+    private var token: AUParameterObserverToken?
 
-    internal var internalAU: AKTanhDistortionAudioUnit?
-    internal var token: AUParameterObserverToken?
+    fileprivate var pregainParameter: AUParameter?
+    fileprivate var postgainParameter: AUParameter?
+    fileprivate var postiveShapeParameterParameter: AUParameter?
+    fileprivate var negativeShapeParameterParameter: AUParameter?
 
-    private var pregainParameter: AUParameter?
-    private var postgainParameter: AUParameter?
-    private var postiveShapeParameterParameter: AUParameter?
-    private var negativeShapeParameterParameter: AUParameter?
+    /// Ramp Time represents the speed at which parameters are allowed to change
+    open dynamic var rampTime: Double = AKSettings.rampTime {
+        willSet {
+            internalAU?.rampTime = newValue
+        }
+    }
 
     /// Determines the amount of gain applied to the signal before waveshaping. A value of 1 gives slight distortion.
-    public var pregain: Double = 2.0 {
-        willSet(newValue) {
+    open dynamic var pregain: Double = 2.0 {
+        willSet {
             if pregain != newValue {
-                pregainParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        pregainParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.pregain = Float(newValue)
+                }
             }
         }
     }
     /// Gain applied after waveshaping
-    public var postgain: Double = 0.5 {
-        willSet(newValue) {
+    open dynamic var postgain: Double = 0.5 {
+        willSet {
             if postgain != newValue {
-                postgainParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        postgainParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.postgain = Float(newValue)
+                }
             }
         }
     }
     /// Shape of the positive part of the signal. A value of 0 gets a flat clip.
-    public var postiveShapeParameter: Double = 0.0 {
-        willSet(newValue) {
+    open dynamic var postiveShapeParameter: Double = 0.0 {
+        willSet {
             if postiveShapeParameter != newValue {
-                postiveShapeParameterParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        postiveShapeParameterParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.postiveShapeParameter = Float(newValue)
+                }
             }
         }
     }
     /// Like the positive shape parameter, only for the negative part.
-    public var negativeShapeParameter: Double = 0.0 {
-        willSet(newValue) {
+    open dynamic var negativeShapeParameter: Double = 0.0 {
+        willSet {
             if negativeShapeParameter != newValue {
-                negativeShapeParameterParameter?.setValue(Float(newValue), originator: token!)
+                if internalAU?.isSetUp() ?? false {
+                    if let existingToken = token {
+                        negativeShapeParameterParameter?.setValue(Float(newValue), originator: existingToken)
+                    }
+                } else {
+                    internalAU?.negativeShapeParameter = Float(newValue)
+                }
             }
         }
     }
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    public var isStarted: Bool {
-        return internalAU!.isPlaying()
+    open dynamic var isStarted: Bool {
+        return internalAU?.isPlaying() ?? false
     }
 
     // MARK: - Initialization
 
     /// Initialize this distortion node
     ///
-    /// - parameter input: Input node to process
-    /// - parameter pregain: Determines the amount of gain applied to the signal before waveshaping. A value of 1 gives slight distortion.
-    /// - parameter postgain: Gain applied after waveshaping
-    /// - parameter postiveShapeParameter: Shape of the positive part of the signal. A value of 0 gets a flat clip.
-    /// - parameter negativeShapeParameter: Like the positive shape parameter, only for the negative part.
+    /// - Parameters:
+    ///   - input: Input node to process
+    ///   - pregain: The amount of gain applied to the signal before waveshaping. A value of 1 gives slight distortion.
+    ///   - postgain: Gain applied after waveshaping
+    ///   - postiveShapeParameter: Shape of the positive part of the signal. A value of 0 gets a flat clip.
+    ///   - negativeShapeParameter: Like the positive shape parameter, only for the negative part.
     ///
     public init(
-        _ input: AKNode,
+        _ input: AKNode?,
         pregain: Double = 2.0,
         postgain: Double = 0.5,
         postiveShapeParameter: Double = 0.0,
@@ -89,69 +115,56 @@ public class AKTanhDistortion: AKNode, AKToggleable {
         self.postiveShapeParameter = postiveShapeParameter
         self.negativeShapeParameter = negativeShapeParameter
 
-        var description = AudioComponentDescription()
-        description.componentType         = kAudioUnitType_Effect
-        description.componentSubType      = 0x64697374 /*'dist'*/
-        description.componentManufacturer = 0x41754b74 /*'AuKt'*/
-        description.componentFlags        = 0
-        description.componentFlagsMask    = 0
-
-        AUAudioUnit.registerSubclass(
-            AKTanhDistortionAudioUnit.self,
-            asComponentDescription: description,
-            name: "Local AKTanhDistortion",
-            version: UInt32.max)
+        _Self.register()
 
         super.init()
-        AVAudioUnit.instantiateWithComponentDescription(description, options: []) {
-            avAudioUnit, error in
+        AVAudioUnit._instantiate(with: _Self.ComponentDescription) { [weak self] avAudioUnit in
 
-            guard let avAudioUnitEffect = avAudioUnit else { return }
+            self?.avAudioNode = avAudioUnit
+            self?.internalAU = avAudioUnit.auAudioUnit as? AKAudioUnitType
 
-            self.avAudioNode = avAudioUnitEffect
-            self.internalAU = avAudioUnitEffect.AUAudioUnit as? AKTanhDistortionAudioUnit
-
-            AudioKit.engine.attachNode(self.avAudioNode)
-            input.addConnectionPoint(self)
+            input?.addConnectionPoint(self!)
         }
 
-        guard let tree = internalAU?.parameterTree else { return }
+        guard let tree = internalAU?.parameterTree else {
+            return
+        }
 
-        pregainParameter                = tree.valueForKey("pregain")                as? AUParameter
-        postgainParameter               = tree.valueForKey("postgain")               as? AUParameter
-        postiveShapeParameterParameter  = tree.valueForKey("postiveShapeParameter")  as? AUParameter
-        negativeShapeParameterParameter = tree.valueForKey("negativeShapeParameter") as? AUParameter
+        pregainParameter = tree["pregain"]
+        postgainParameter = tree["postgain"]
+        postiveShapeParameterParameter = tree["postiveShapeParameter"]
+        negativeShapeParameterParameter = tree["negativeShapeParameter"]
 
-        token = tree.tokenByAddingParameterObserver {
-            address, value in
+        token = tree.token (byAddingParameterObserver: { [weak self] address, value in
 
-            dispatch_async(dispatch_get_main_queue()) {
-                if address == self.pregainParameter!.address {
-                    self.pregain = Double(value)
-                } else if address == self.postgainParameter!.address {
-                    self.postgain = Double(value)
-                } else if address == self.postiveShapeParameterParameter!.address {
-                    self.postiveShapeParameter = Double(value)
-                } else if address == self.negativeShapeParameterParameter!.address {
-                    self.negativeShapeParameter = Double(value)
+            DispatchQueue.main.async {
+                if address == self?.pregainParameter?.address {
+                    self?.pregain = Double(value)
+                } else if address == self?.postgainParameter?.address {
+                    self?.postgain = Double(value)
+                } else if address == self?.postiveShapeParameterParameter?.address {
+                    self?.postiveShapeParameter = Double(value)
+                } else if address == self?.negativeShapeParameterParameter?.address {
+                    self?.negativeShapeParameter = Double(value)
                 }
             }
-        }
-        pregainParameter?.setValue(Float(pregain), originator: token!)
-        postgainParameter?.setValue(Float(postgain), originator: token!)
-        postiveShapeParameterParameter?.setValue(Float(postiveShapeParameter), originator: token!)
-        negativeShapeParameterParameter?.setValue(Float(negativeShapeParameter), originator: token!)
+        })
+
+        internalAU?.pregain = Float(pregain)
+        internalAU?.postgain = Float(postgain)
+        internalAU?.postiveShapeParameter = Float(postiveShapeParameter)
+        internalAU?.negativeShapeParameter = Float(negativeShapeParameter)
     }
-    
+
     // MARK: - Control
 
     /// Function to start, play, or activate the node, all do the same thing
-    public func start() {
-        self.internalAU!.start()
+    open func start() {
+        internalAU?.start()
     }
 
     /// Function to stop or bypass the node, both are equivalent
-    public func stop() {
-        self.internalAU!.stop()
+    open func stop() {
+        internalAU?.stop()
     }
 }

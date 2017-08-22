@@ -8,25 +8,21 @@ int sporth_tseq(sporth_stack *stack, void *ud)
 
     plumber_data *pd = ud;
     SPFLOAT out = 0, trig = 0, shuf = 0;
-    char *ftname;
+    const char *ftname;
     sp_ftbl *ft;
     sp_tseq *tseq;
-
-    if(pd->mode == PLUMBER_DESTROY) {
-fprintf(stderr, "WE IZ DESTROYING TSEQ!!!!\n");
-    }
 
     switch(pd->mode){
         case PLUMBER_CREATE:
 #ifdef DEBUG_MODE
-            fprintf(stderr, "Creating tseq function... \n");
+            plumber_print(pd, "Creating tseq function... \n");
 #endif
             sp_tseq_create(&tseq);
             plumber_add_ugen(pd, SPORTH_TSEQ, tseq);
 
             if(sporth_check_args(stack, "ffs") != SPORTH_OK) {
                 stack->error++;
-                fprintf(stderr, "Invalid arguments for tseq.\n");
+                plumber_print(pd, "Invalid arguments for tseq.\n");
                 return PLUMBER_NOTOK;
             }
 
@@ -35,7 +31,6 @@ fprintf(stderr, "WE IZ DESTROYING TSEQ!!!!\n");
             trig = sporth_stack_pop_float(stack);
 
             sporth_stack_push_float(stack, 0.0);
-            free(ftname);
 
             break;
         case PLUMBER_INIT:
@@ -45,11 +40,10 @@ fprintf(stderr, "WE IZ DESTROYING TSEQ!!!!\n");
             trig = sporth_stack_pop_float(stack);
 
 #ifdef DEBUG_MODE
-            fprintf(stderr, "tseq INIT: searching for ftable... \n");
+            plumber_print(pd, "tseq INIT: searching for ftable... \n");
 #endif
 
             if(plumber_ftmap_search(pd, ftname, &ft) == PLUMBER_NOTOK) {
-                free(ftname);
                 stack->error++;
                 return PLUMBER_NOTOK;
             }
@@ -57,7 +51,6 @@ fprintf(stderr, "WE IZ DESTROYING TSEQ!!!!\n");
             tseq = pd->last->ud;
             sp_tseq_init(pd->sp, tseq, ft);
             sporth_stack_push_float(stack, 0.0);
-            free(ftname);
             break;
 
         case PLUMBER_COMPUTE:
@@ -71,7 +64,7 @@ fprintf(stderr, "WE IZ DESTROYING TSEQ!!!!\n");
             break;
         case PLUMBER_DESTROY:
 #ifdef DEBUG_MODE
-            fprintf(stderr, "Destroying tseq\n");
+            plumber_print(pd, "Destroying tseq\n");
 #endif 
             tseq = pd->last->ud;
             sp_tseq_destroy(&tseq);

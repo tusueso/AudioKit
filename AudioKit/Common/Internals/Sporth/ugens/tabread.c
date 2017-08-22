@@ -6,7 +6,7 @@ int sporth_tabread(sporth_stack *stack, void *ud)
 {
     plumber_data *pd = ud;
     SPFLOAT out;
-    char *ftname;
+    const char *ftname;
     sp_ftbl *ft;
     SPFLOAT index;
     SPFLOAT mode;
@@ -18,13 +18,13 @@ int sporth_tabread(sporth_stack *stack, void *ud)
         case PLUMBER_CREATE:
 
 #ifdef DEBUG_MODE
-            fprintf(stderr, "tabread: Creating\n");
+            plumber_print(pd, "tabread: Creating\n");
 #endif
 
             sp_tabread_create(&tabread);
             plumber_add_ugen(pd, SPORTH_TABREAD, tabread);
             if(sporth_check_args(stack, "ffffs") != SPORTH_OK) {
-                fprintf(stderr,"Not enough arguments for tabread\n");
+                plumber_print(pd,"Not enough arguments for tabread\n");
                 stack->error++;
                 return PLUMBER_NOTOK;
             }
@@ -39,14 +39,13 @@ int sporth_tabread(sporth_stack *stack, void *ud)
                 return PLUMBER_NOTOK;
             }
 
-            sp_tabread_init(pd->sp, tabread, ft);
+            sp_tabread_init(pd->sp, tabread, ft, mode);
             sporth_stack_push_float(stack, 0);
-            free(ftname);
             break;
         case PLUMBER_INIT:
 
 #ifdef DEBUG_MODE
-            fprintf(stderr, "tabread: Initialising\n");
+            plumber_print(pd, "tabread: Initialising\n");
 #endif
             ftname = sporth_stack_pop_string(stack);
             wrap = sporth_stack_pop_float(stack);
@@ -56,7 +55,6 @@ int sporth_tabread(sporth_stack *stack, void *ud)
             tabread = pd->last->ud;
 
             sporth_stack_push_float(stack, 0);
-            free(ftname);
             break;
         case PLUMBER_COMPUTE:
             wrap = sporth_stack_pop_float(stack);
@@ -76,7 +74,7 @@ int sporth_tabread(sporth_stack *stack, void *ud)
             sp_tabread_destroy(&tabread);
             break;
         default:
-            fprintf(stderr, "tabread: Uknown mode!\n");
+            plumber_print(pd, "tabread: Unknown mode!\n");
             break;
     }
     return PLUMBER_OK;

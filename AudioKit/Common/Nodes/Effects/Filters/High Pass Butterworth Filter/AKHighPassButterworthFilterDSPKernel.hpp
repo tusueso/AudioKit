@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#ifndef AKHighPassButterworthFilterDSPKernel_hpp
-#define AKHighPassButterworthFilterDSPKernel_hpp
+#pragma once
 
-#import "AKDSPKernel.hpp"
-#import "AKParameterRamper.hpp"
+#import "DSPKernel.hpp"
+#import "ParameterRamper.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -22,23 +21,23 @@ enum {
     cutoffFrequencyAddress = 0
 };
 
-class AKHighPassButterworthFilterDSPKernel : public AKDSPKernel {
+class AKHighPassButterworthFilterDSPKernel : public AKSoundpipeKernel, public AKBuffered {
 public:
     // MARK: Member Functions
 
     AKHighPassButterworthFilterDSPKernel() {}
 
-    void init(int channelCount, double inSampleRate) {
-        channels = channelCount;
+    void init(int _channels, double _sampleRate) override {
+        AKSoundpipeKernel::init(_channels, _sampleRate);
 
-        sampleRate = float(inSampleRate);
+        sp_buthp_create(&buthp0);
+        sp_buthp_create(&buthp1);
+        sp_buthp_init(sp, buthp0);
+        sp_buthp_init(sp, buthp1);
+        buthp0->freq = 500.0;
+        buthp1->freq = 500.0;
 
-        sp_create(&sp);
-        sp->sr = sampleRate;
-        sp->nchan = channels;
-        sp_buthp_create(&buthp);
-        sp_buthp_init(sp, buthp);
-        buthp->freq = 500;
+        cutoffFrequencyRamper.init();
     }
 
     void start() {
@@ -50,17 +49,26 @@ public:
     }
 
     void destroy() {
-        sp_buthp_destroy(&buthp);
-        sp_destroy(&sp);
+        sp_buthp_destroy(&buthp0);
+        sp_buthp_destroy(&buthp1);
+        AKSoundpipeKernel::destroy();
     }
 
     void reset() {
+        resetted = true;
+        cutoffFrequencyRamper.reset();
     }
+
+    void setCutoffFrequency(float value) {
+        cutoffFrequency = clamp(value, 12.0f, 20000.0f);
+        cutoffFrequencyRamper.setImmediate(cutoffFrequency);
+    }
+
 
     void setParameter(AUParameterAddress address, AUValue value) {
         switch (address) {
             case cutoffFrequencyAddress:
-                cutoffFrequencyRamper.set(clamp(value, (float)12.0, (float)20000.0));
+                cutoffFrequencyRamper.setUIValue(clamp(value, 12.0f, 20000.0f));
                 break;
 
         }
@@ -69,7 +77,7 @@ public:
     AUValue getParameter(AUParameterAddress address) {
         switch (address) {
             case cutoffFrequencyAddress:
-                return cutoffFrequencyRamper.goal();
+                return cutoffFrequencyRamper.getUIValue();
 
             default: return 0.0f;
         }
@@ -78,36 +86,35 @@ public:
     void startRamp(AUParameterAddress address, AUValue value, AUAudioFrameCount duration) override {
         switch (address) {
             case cutoffFrequencyAddress:
-                cutoffFrequencyRamper.startRamp(clamp(value, (float)12.0, (float)20000.0), duration);
+                cutoffFrequencyRamper.startRamp(clamp(value, 12.0f, 20000.0f), duration);
                 break;
 
         }
     }
 
-    void setBuffers(AudioBufferList *inBufferList, AudioBufferList *outBufferList) {
-        inBufferListPtr = inBufferList;
-        outBufferListPtr = outBufferList;
-    }
-
     void process(AUAudioFrameCount frameCount, AUAudioFrameCount bufferOffset) override {
-        // For each sample.
+
         for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
-            double cutoffFrequency = double(cutoffFrequencyRamper.getStep());
 
             int frameOffset = int(frameIndex + bufferOffset);
 
-            buthp->freq = (float)cutoffFrequency;
+            cutoffFrequency = cutoffFrequencyRamper.getAndStep();
+            buthp0->freq = (float)cutoffFrequency;
+            buthp1->freq = (float)cutoffFrequency;
 
-            if (!started) {
-                outBufferListPtr->mBuffers[0] = inBufferListPtr->mBuffers[0];
-                outBufferListPtr->mBuffers[1] = inBufferListPtr->mBuffers[1];
-                return;
-            }
             for (int channel = 0; channel < channels; ++channel) {
                 float *in  = (float *)inBufferListPtr->mBuffers[channel].mData  + frameOffset;
                 float *out = (float *)outBufferListPtr->mBuffers[channel].mData + frameOffset;
 
-                sp_buthp_compute(sp, buthp, in, out);
+                if (started) {
+                    if (channel == 0) {
+                        sp_buthp_compute(sp, buthp0, in, out);
+                    } else {
+                        sp_buthp_compute(sp, buthp1, in, out);
+                    }
+                } else {
+                    *out = *in;
+                }
             }
         }
     }
@@ -116,18 +123,13 @@ public:
 
 private:
 
-    int channels = AKSettings.numberOfChannels;
-    float sampleRate = AKSettings.sampleRate;
+    sp_buthp *buthp0;
+    sp_buthp *buthp1;
 
-    AudioBufferList *inBufferListPtr = nullptr;
-    AudioBufferList *outBufferListPtr = nullptr;
-
-    sp_data *sp;
-    sp_buthp *buthp;
+    float cutoffFrequency = 500.0;
 
 public:
     bool started = true;
-    AKParameterRamper cutoffFrequencyRamper = 500;
+    bool resetted = false;
+    ParameterRamper cutoffFrequencyRamper = 500.0;
 };
-
-#endif /* AKHighPassButterworthFilterDSPKernel_hpp */

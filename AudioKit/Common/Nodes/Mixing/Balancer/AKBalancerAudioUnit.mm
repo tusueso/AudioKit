@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2015 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
 #import "AKBalancerAudioUnit.h"
 #import "AKBalancerDSPKernel.hpp"
 
-#import <AVFoundation/AVFoundation.h>
-#import "AKBufferedAudioBus.hpp"
+#import "BufferedAudioBus.hpp"
 
 #import <AudioKit/AudioKit-Swift.h>
 
@@ -19,8 +18,6 @@
 @property AUAudioUnitBus *outputBus;
 @property AUAudioUnitBusArray *inputBusArray;
 @property AUAudioUnitBusArray *outputBusArray;
-
-@property (nonatomic, readwrite) AUParameterTree *parameterTree;
 
 @end
 
@@ -83,16 +80,16 @@
                                                               busses: @[_outputBus]];
 
     // Make a local pointer to the kernel to avoid capturing self.
-    __block AKBalancerDSPKernel *blockKernel = &_kernel;
+    __block AKBalancerDSPKernel *balancerKernel = &_kernel;
 
     // implementorValueObserver is called when a parameter changes value.
     _parameterTree.implementorValueObserver = ^(AUParameter *param, AUValue value) {
-        blockKernel->setParameter(param.address, value);
+        balancerKernel->setParameter(param.address, value);
     };
 
     // implementorValueProvider is called when the value needs to be refreshed.
     _parameterTree.implementorValueProvider = ^(AUParameter *param) {
-        return blockKernel->getParameter(param.address);
+        return balancerKernel->getParameter(param.address);
     };
 
     self.maximumFramesToRender = 512;
@@ -154,14 +151,6 @@
 
     _inputBus.deallocateRenderResources();
     _comparatorBus.deallocateRenderResources();
-
-    // Make a local pointer to the kernel to avoid capturing self.
-    __block AKBalancerDSPKernel *blockKernel = &_kernel;
-
-    // Go back to setting parameters instead of scheduling them.
-    self.parameterTree.implementorValueObserver = ^(AUParameter *param, AUValue value) {
-        blockKernel->setParameter(param.address, value);
-    };
 }
 
 - (AUInternalRenderBlock)internalRenderBlock {

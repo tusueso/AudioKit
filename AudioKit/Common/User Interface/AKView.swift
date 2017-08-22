@@ -1,15 +1,15 @@
 //
 //  AKView.swift
-//  AudioKit For iOS
+//  AudioKit
 //
-//  Created by Stéphane Peter on 1/31/16.
-//  Copyright © 2016 AudioKit. All rights reserved.
+//  Created by Stéphane Peter, revision history on Github.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
 
-#if os(OSX)
+#if os(macOS)
     public typealias AKView = NSView
-    typealias AKColor = NSColor
+    public typealias AKColor = NSColor
 #else
     public typealias AKView = UIView
-    typealias AKColor = UIColor
+    public typealias AKColor = UIColor
 #endif

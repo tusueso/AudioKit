@@ -1,31 +1,24 @@
-module_name: AudioKit
-author_name: Aurelius Prochazka
-author_url: https://audiokit.io/
+module: AudioKit
+author: Aurelius Prochazka
+author_url: http://audiokit.io/
 github_url: https://github.com/audiokit/AudioKit
 min_acl: public
-readme_path: ../README.md
-swift_version: 2.1.1
+readme: ../README.md
+#swift_version: 3.0
 
 
 custom_categories:
   - name: AudioKit Core
     children:
     - AudioKit
+    - AKAudioFile
+    - AKDevice
+    - AKMicrophoneTracker
+    - AKNodeRecorder
     - AKSettings
     - AKTable
     - AKTableType
-
-  - name: Instruments
-    children:
-    - AKPolyphonicInstrument
-    - AKVoice
-    - AKFMSynth
-    - AKNoiseGenerator
-    - AKPWMSynth
-    - AKSawtoothSynth
-    - AKSynthKick
-    - AKSynthSnare
-    - AKWavetableSynth
+    - AKTester
 
   - name: MIDI
     children:
@@ -34,21 +27,31 @@ custom_categories:
     - AKMIDIControl
     - AKMIDIInstrument
     - AKMIDIListener
+    - AKMIDINode
+    - AKMIDISampler
     - AKMIDIStatus
     - AKMIDISystemCommand
+    - MIDIPacket
+    - MIDIPacketList
+    - AKCallbackInstrument
+
+  - name: Sequencer
+    children:
+    - AKSequencer
+    - AKDuration
     - AKMusicTrack
 
   - name: Nodes
     children:
     - AKNode
+    - AKPolyphonic
+    - AKPolyphonicNode
     - AKToggleable
-    - AKOperationEffect
     - AKOperationGenerator
 
   - name: Analysis Nodes
     children:
     - AKAmplitudeTracker
-    - AKFFT
     - AKFrequencyTracker
 
   - name: Delay Nodes
@@ -72,15 +75,20 @@ custom_categories:
     - AKExpander
     - AKPeakLimiter
 
+  - name: Effects Nodes
+    children:
+    - AKOperationEffect
+    - AKPitchShifter
+
   - name: Envelopes
     children:
     - AKAmplitudeEnvelope
+    - AKTremolo
 
   - name: Filter Nodes
     children:
     - AKAutoWah
     - AKBandPassButterworthFilter
-    - AKBandPassFilter
     - AKBandRejectButterworthFilter
     - AKCombFilterReverb
     - AKDCBlock
@@ -90,14 +98,15 @@ custom_categories:
     - AKHighPassFilter
     - AKHighShelfFilter
     - AKHighShelfParametricEqualizerFilter
+    - AKKorgLowPassFilter
     - AKLowPassButterworthFilter
     - AKLowPassFilter
     - AKLowShelfFilter
     - AKLowShelfParametricEqualizerFilter
     - AKModalResonanceFilter
     - AKMoogLadder
-    - AKParametricEQ
     - AKPeakingParametricEqualizerFilter
+    - AKResonantFilter
     - AKRolandTB303Filter
     - AKStringResonator
     - AKThreePoleLowpassFilter
@@ -121,23 +130,35 @@ custom_categories:
   - name: Oscillator Nodes
     children:
     - AKFMOscillator
+    - AKFMOscillatorBank
     - AKMorphingOscillator
+    - AKMorphingOscillatorBank
     - AKOscillator
-    - AKSawtoothOscillator
-    - AKSquareWaveOscillator
-    - AKTriangleOscillator
+    - AKOscillatorBank
+    - AKPhaseDistortionOscillator
+    - AKPhaseDistortionOscillatorBank
+    - AKPWMOscillator
+    - AKPWMOscillatorBank
 
   - name: Physical Models
     children:
+    - AKClarinet
     - AKDrip
+    - AKFlute
+    - AKMandolin
+    - AKMetalBar
     - AKPluckedString
+    - AKSynthKick
+    - AKSynthSnare
 
   - name: Input Node
     children:
     - AKMicrophone
+    - AKStereoInput
 
   - name: Mixing Nodes
     children:
+    - AK3DPanner
     - AKBalancer
     - AKBooster
     - AKDryWetMixer
@@ -148,9 +169,10 @@ custom_categories:
     children:
     - AKAudioPlayer
     - AKPhaseLockedVocoder
+    - AKSamplePlayer
     - AKSampler
-    - AKSequencer
     - AKTimePitch
+    - AKVariSpeed
 
   - name: Operations
     children:
@@ -158,14 +180,12 @@ custom_categories:
     - AKComputedParameter
     - AKOperation
     - AKStereoOperation
+    - Numeric
 
-  - name: Function Operations
+  - name: Math
     children:
-    - "*(_:_:)"
-    - "+(_:_:)"
-    - "-(_:_:)"
-    - "/(_:_:)"
     - abs(_:)
+    - ceil(_:)
     - floor(_:)
     - fract(_:)
     - log(_:)
@@ -174,11 +194,23 @@ custom_categories:
     - min(_:_:)
     - mixer(_:_:balance:)
     - round(_:)
+    - "*(_:_:)"
+    - "+(_:_:)"
+    - "-(_:_:)"
+    - "/(_:_:)"
+    - "==(_:_:)"
+    - "!=(_:_:)"
+    - "<(_:_:)"
+    - "<=(_:_:)"
+    - ">(_:_:)"
+    - ">=(_:_:)"
+    - "%(_:_:)"
+    - "+=(_:_:)"
+    - "-=(_:_:)"
 
   - name: Random Number Generators
     children:
     - random(_:_:)
-    - randomInt(_:)
 
   - name: Plotting Tools
     children:
@@ -187,6 +219,21 @@ custom_categories:
     - AKNodeOutputPlot
     - AKOutputWaveformPlot
 
+  - name: Taps
+    children:
+    - AKAmplitudeTap
+    - AKFFTTap
 
-
-
+  - name: UI Elements
+    children:
+    - AKADSRView
+    - AKButton
+    - AKBypassButton
+    - AKKeyboardView
+    - AKKeyboardDelegate
+    - AKPlaygroundLoop
+    - AKPlaygroundView
+    - AKPresetLoaderView
+    - AKPropertySlider
+    - AKResourcesAudioFileLoaderView
+    - AKTelephoneView

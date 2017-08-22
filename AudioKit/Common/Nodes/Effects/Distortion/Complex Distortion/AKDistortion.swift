@@ -3,347 +3,177 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright (c) 2016 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
 //
-
-import AVFoundation
 
 /// AudioKit version of Apple's Distortion Audio Unit
 ///
-/// - parameter input: Input node to process
-/// - parameter delay: Delay (Milliseconds) ranges from 0.1 to 500 (Default: 0.1)
-/// - parameter decay: Decay (Rate) ranges from 0.1 to 50 (Default: 1.0)
-/// - parameter delayMix: Delay Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-/// - parameter decimation: Decimation (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-/// - parameter rounding: Rounding (Normalized Value) ranges from 0 to 1 (Default: 0.0)
-/// - parameter decimationMix: Decimation Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-/// - parameter linearTerm: Linear Term (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-/// - parameter squaredTerm: Squared Term (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-/// - parameter cubicTerm: Cubic Term (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-/// - parameter polynomialMix: Polynomial Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-/// - parameter ringModFreq1: Ring Mod Freq1 (Hertz) ranges from 0.5 to 8000 (Default: 100)
-/// - parameter ringModFreq2: Ring Mod Freq2 (Hertz) ranges from 0.5 to 8000 (Default: 100)
-/// - parameter ringModBalance: Ring Mod Balance (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-/// - parameter ringModMix: Ring Mod Mix (Normalized Value) ranges from 0 to 1 (Default: 0.0)
-/// - parameter softClipGain: Soft Clip Gain (dB) ranges from -80 to 20 (Default: -6)
-/// - parameter finalMix: Final Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-///
-public class AKDistortion: AKNode, AKToggleable {
+open class AKDistortion: AKNode, AKToggleable, AUEffect {
 
-    
     // MARK: - Properties
-    
-    private let cd = AudioComponentDescription(
-        componentType: kAudioUnitType_Effect,
-        componentSubType: kAudioUnitSubType_Distortion,
-        componentManufacturer: kAudioUnitManufacturer_Apple,
-        componentFlags: 0,
-        componentFlagsMask: 0)
 
-    internal var internalEffect = AVAudioUnitEffect()
-    internal var internalAU = AudioUnit()
-    
+    /// Four letter unique description of the node
+    public static let ComponentDescription = AudioComponentDescription(appleEffect: kAudioUnitSubType_Distortion)
+
+    private var au: AUWrapper
     private var lastKnownMix: Double = 0.5
 
     /// Delay (Milliseconds) ranges from 0.1 to 500 (Default: 0.1)
-    public var delay: Double = 0.1 {
+    open dynamic var delay: Double = 0.1 {
         didSet {
-            if delay < 0.1 {
-                delay = 0.1
-            }            
-            if delay > 500 {
-                delay = 500
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_Delay,
-                kAudioUnitScope_Global, 0,
-                Float(delay), 0)
+            delay = (0.1...500).clamp(delay)
+            au[kDistortionParam_Delay] = delay
         }
     }
 
     /// Decay (Rate) ranges from 0.1 to 50 (Default: 1.0)
-    public var decay: Double = 1.0 {
+    open dynamic var decay: Double = 1.0 {
         didSet {
-            if decay < 0.1 {
-                decay = 0.1
-            }            
-            if decay > 50 {
-                decay = 50
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_Decay,
-                kAudioUnitScope_Global, 0,
-                Float(decay), 0)
+            decay = (0.1...50).clamp(decay)
+            au[kDistortionParam_Decay] = decay
         }
     }
 
     /// Delay Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    public var delayMix: Double = 0.5 {
+    open dynamic var delayMix: Double = 0.5 {
         didSet {
-            if delayMix < 0 {
-                delayMix = 0
-            }            
-            if delayMix > 1 {
-                delayMix = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_DelayMix,
-                kAudioUnitScope_Global, 0,
-                Float(delayMix) * 100.0, 0)
+            delayMix = (0...1).clamp(delayMix)
+            au[kDistortionParam_DelayMix] = delayMix * 100
         }
     }
 
     /// Decimation (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    public var decimation: Double = 0.5 {
+    open dynamic var decimation: Double = 0.5 {
         didSet {
-            if decimation < 0 {
-                decimation = 0
-            }            
-            if decimation > 1 {
-                decimation = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_Decimation,
-                kAudioUnitScope_Global, 0,
-                Float(decimation) * 100.0, 0)
+            decimation = (0...1).clamp(decimation)
+            au[kDistortionParam_Decimation] = decimation * 100
         }
     }
 
     /// Rounding (Normalized Value) ranges from 0 to 1 (Default: 0.0)
-    public var rounding: Double = 0.0 {
+    open dynamic var rounding: Double = 0.0 {
         didSet {
-            if rounding < 0 {
-                rounding = 0
-            }            
-            if rounding > 1 {
-                rounding = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_Rounding,
-                kAudioUnitScope_Global, 0,
-                Float(rounding) * 100.0, 0)
+            rounding = (0...1).clamp(rounding)
+            au[kDistortionParam_Rounding] = rounding * 100
         }
     }
 
     /// Decimation Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    public var decimationMix: Double = 0.5 {
+    open dynamic var decimationMix: Double = 0.5 {
         didSet {
-            if decimationMix < 0 {
-                decimationMix = 0
-            }            
-            if decimationMix > 1 {
-                decimationMix = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_DecimationMix,
-                kAudioUnitScope_Global, 0,
-                Float(decimationMix) * 100.0, 0)
+            decimationMix = (0...1).clamp(decimationMix)
+            au[kDistortionParam_DecimationMix] = decimationMix * 100
         }
     }
 
     /// Linear Term (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    public var linearTerm: Double = 0.5 {
+    open dynamic var linearTerm: Double = 0.5 {
         didSet {
-            if linearTerm < 0 {
-                linearTerm = 0
-            }            
-            if linearTerm > 1 {
-                linearTerm = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_LinearTerm,
-                kAudioUnitScope_Global, 0,
-                Float(linearTerm) * 100.0, 0)
+            linearTerm = (0...1).clamp(linearTerm)
+            au[kDistortionParam_LinearTerm] = linearTerm * 100
         }
     }
 
     /// Squared Term (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    public var squaredTerm: Double = 0.5 {
+    open dynamic var squaredTerm: Double = 0.5 {
         didSet {
-            if squaredTerm < 0 {
-                squaredTerm = 0
-            }            
-            if squaredTerm > 1 {
-                squaredTerm = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_SquaredTerm,
-                kAudioUnitScope_Global, 0,
-                Float(squaredTerm) * 100.0, 0)
+            squaredTerm = (0...1).clamp(squaredTerm)
+            au[kDistortionParam_SquaredTerm] = squaredTerm * 100
         }
     }
 
     /// Cubic Term (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    public var cubicTerm: Double = 0.5 {
+    open dynamic var cubicTerm: Double = 0.5 {
         didSet {
-            if cubicTerm < 0 {
-                cubicTerm = 0
-            }            
-            if cubicTerm > 1 {
-                cubicTerm = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_CubicTerm,
-                kAudioUnitScope_Global, 0,
-                Float(cubicTerm) * 100.0, 0)
+            cubicTerm = (0...1).clamp(cubicTerm)
+            au[kDistortionParam_CubicTerm] = cubicTerm * 100
         }
     }
 
     /// Polynomial Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    public var polynomialMix: Double = 0.5 {
+    open dynamic var polynomialMix: Double = 0.5 {
         didSet {
-            if polynomialMix < 0 {
-                polynomialMix = 0
-            }            
-            if polynomialMix > 1 {
-                polynomialMix = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_PolynomialMix,
-                kAudioUnitScope_Global, 0,
-                Float(polynomialMix * 100.0), 0)
+            polynomialMix = (0...1).clamp(polynomialMix)
+            au[kDistortionParam_PolynomialMix] = polynomialMix * 100
         }
     }
 
     /// Ring Mod Freq1 (Hertz) ranges from 0.5 to 8000 (Default: 100)
-    public var ringModFreq1: Double = 100 {
+    open dynamic var ringModFreq1: Double = 100 {
         didSet {
-            if ringModFreq1 < 0.5 {
-                ringModFreq1 = 0.5
-            }            
-            if ringModFreq1 > 8000 {
-                ringModFreq1 = 8000
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_RingModFreq1,
-                kAudioUnitScope_Global, 0,
-                Float(ringModFreq1), 0)
+            ringModFreq1 = (0.5...8_000).clamp(ringModFreq1)
+            au[kDistortionParam_RingModFreq1] = ringModFreq1
         }
     }
 
     /// Ring Mod Freq2 (Hertz) ranges from 0.5 to 8000 (Default: 100)
-    public var ringModFreq2: Double = 100 {
+    open dynamic var ringModFreq2: Double = 100 {
         didSet {
-            if ringModFreq2 < 0.5 {
-                ringModFreq2 = 0.5
-            }            
-            if ringModFreq2 > 8000 {
-                ringModFreq2 = 8000
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_RingModFreq2,
-                kAudioUnitScope_Global, 0,
-                Float(ringModFreq2), 0)
+            ringModFreq2 = (0.5...8_000).clamp(ringModFreq2)
+            au[kDistortionParam_RingModFreq2] = ringModFreq2
         }
     }
 
     /// Ring Mod Balance (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    public var ringModBalance: Double = 0.5 {
+    open dynamic var ringModBalance: Double = 0.5 {
         didSet {
-            if ringModBalance < 0 {
-                ringModBalance = 0
-            }            
-            if ringModBalance > 1 {
-                ringModBalance = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_RingModBalance,
-                kAudioUnitScope_Global, 0,
-                Float(ringModBalance * 100.0), 0)
+            ringModBalance = (0...1).clamp(ringModBalance)
+            au[kDistortionParam_RingModBalance] = ringModBalance * 100
         }
     }
 
     /// Ring Mod Mix (Normalized Value) ranges from 0 to 1 (Default: 0.0)
-    public var ringModMix: Double = 0.0 {
+    open dynamic var ringModMix: Double = 0.0 {
         didSet {
-            if ringModMix < 0 {
-                ringModMix = 0
-            }            
-            if ringModMix > 1 {
-                ringModMix = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_RingModMix,
-                kAudioUnitScope_Global, 0,
-                Float(ringModMix * 100.0), 0)
+            ringModMix = (0...1).clamp(ringModMix)
+            au[kDistortionParam_RingModMix] = ringModMix * 100
         }
     }
 
     /// Soft Clip Gain (dB) ranges from -80 to 20 (Default: -6)
-    public var softClipGain: Double = -6 {
+    open dynamic var softClipGain: Double = -6 {
         didSet {
-            if softClipGain < -80 {
-                softClipGain = -80
-            }            
-            if softClipGain > 20 {
-                softClipGain = 20
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_SoftClipGain,
-                kAudioUnitScope_Global, 0,
-                Float(softClipGain), 0)
+            softClipGain = (-80...20).clamp(softClipGain)
+            au[kDistortionParam_SoftClipGain] = softClipGain
         }
     }
 
     /// Final Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    public var finalMix: Double = 0.5 {
+    open dynamic var finalMix: Double = 0.5 {
         didSet {
-            if finalMix < 0 {
-                finalMix = 0
-            }            
-            if finalMix > 1 {
-                finalMix = 1
-            }
-            AudioUnitSetParameter(
-                internalAU,
-                kDistortionParam_FinalMix,
-                kAudioUnitScope_Global, 0,
-                Float(finalMix * 100.0), 0)
+            finalMix = (0...1).clamp(finalMix)
+            au[kDistortionParam_FinalMix] = finalMix * 100
         }
     }
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    public var isStarted = true
+    open dynamic var isStarted = true
 
     // MARK: - Initialization
-    
+
     /// Initialize the distortion node
     ///
-    /// - parameter input: Input node to process
-    /// - parameter delay: Delay (Milliseconds) ranges from 0.1 to 500 (Default: 0.1)
-    /// - parameter decay: Decay (Rate) ranges from 0.1 to 50 (Default: 1.0)
-    /// - parameter delayMix: Delay Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    /// - parameter decimation: Decimation (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    /// - parameter rounding: Rounding (Normalized Value) ranges from 0 to 1 (Default: 0.0)
-    /// - parameter decimationMix: Decimation Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    /// - parameter linearTerm: Linear Term (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    /// - parameter squaredTerm: Squared Term (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    /// - parameter cubicTerm: Cubic Term (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    /// - parameter polynomialMix: Polynomial Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    /// - parameter ringModFreq1: Ring Mod Freq1 (Hertz) ranges from 0.5 to 8000 (Default: 100)
-    /// - parameter ringModFreq2: Ring Mod Freq2 (Hertz) ranges from 0.5 to 8000 (Default: 100)
-    /// - parameter ringModBalance: Ring Mod Balance (Normalized Value) ranges from 0 to 1 (Default: 0.5)
-    /// - parameter ringModMix: Ring Mod Mix (Normalized Value) ranges from 0 to 1 (Default: 0.0)
-    /// - parameter softClipGain: Soft Clip Gain (dB) ranges from -80 to 20 (Default: -6)
-    /// - parameter finalMix: Final Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
+    /// - Parameters:
+    ///   - input: Input node to process
+    ///   - delay: Delay (Milliseconds) ranges from 0.1 to 500 (Default: 0.1)
+    ///   - decay: Decay (Rate) ranges from 0.1 to 50 (Default: 1.0)
+    ///   - delayMix: Delay Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
+    ///   - decimation: Decimation (Normalized Value) ranges from 0 to 1 (Default: 0.5)
+    ///   - rounding: Rounding (Normalized Value) ranges from 0 to 1 (Default: 0.0)
+    ///   - decimationMix: Decimation Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
+    ///   - linearTerm: Linear Term (Normalized Value) ranges from 0 to 1 (Default: 0.5)
+    ///   - squaredTerm: Squared Term (Normalized Value) ranges from 0 to 1 (Default: 0.5)
+    ///   - cubicTerm: Cubic Term (Normalized Value) ranges from 0 to 1 (Default: 0.5)
+    ///   - polynomialMix: Polynomial Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
+    ///   - ringModFreq1: Ring Mod Freq1 (Hertz) ranges from 0.5 to 8000 (Default: 100)
+    ///   - ringModFreq2: Ring Mod Freq2 (Hertz) ranges from 0.5 to 8000 (Default: 100)
+    ///   - ringModBalance: Ring Mod Balance (Normalized Value) ranges from 0 to 1 (Default: 0.5)
+    ///   - ringModMix: Ring Mod Mix (Normalized Value) ranges from 0 to 1 (Default: 0.0)
+    ///   - softClipGain: Soft Clip Gain (dB) ranges from -80 to 20 (Default: -6)
+    ///   - finalMix: Final Mix (Normalized Value) ranges from 0 to 1 (Default: 0.5)
     ///
     public init(
-        _ input: AKNode,
+        _ input: AKNode?,
         delay: Double = 0.1,
         decay: Double = 1.0,
         delayMix: Double = 0.5,
@@ -377,36 +207,36 @@ public class AKDistortion: AKNode, AKToggleable {
             self.ringModMix = ringModMix
             self.softClipGain = softClipGain
             self.finalMix = finalMix
-            
-            internalEffect = AVAudioUnitEffect(audioComponentDescription: cd)
-            super.init()
-            avAudioNode = internalEffect
-            AudioKit.engine.attachNode(self.avAudioNode)
-            input.addConnectionPoint(self)
-            internalAU = internalEffect.audioUnit
-            
-            AudioUnitSetParameter(internalAU, kDistortionParam_Delay, kAudioUnitScope_Global, 0, Float(delay), 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_Decay, kAudioUnitScope_Global, 0, Float(decay), 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_DelayMix, kAudioUnitScope_Global, 0, Float(delayMix) * 100.0, 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_Decimation, kAudioUnitScope_Global, 0, Float(decimation) * 100.0, 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_Rounding, kAudioUnitScope_Global, 0, Float(rounding) * 100.0, 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_DecimationMix, kAudioUnitScope_Global, 0, Float(decimationMix) * 100.0, 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_LinearTerm, kAudioUnitScope_Global, 0, Float(linearTerm) * 100.0, 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_SquaredTerm, kAudioUnitScope_Global, 0, Float(squaredTerm) * 100.0, 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_CubicTerm, kAudioUnitScope_Global, 0, Float(cubicTerm) * 100.0, 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_PolynomialMix, kAudioUnitScope_Global, 0, Float(polynomialMix) * 100.0, 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_RingModFreq1, kAudioUnitScope_Global, 0, Float(ringModFreq1), 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_RingModFreq2, kAudioUnitScope_Global, 0, Float(ringModFreq2), 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_RingModBalance, kAudioUnitScope_Global, 0, Float(ringModBalance) * 100.0, 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_RingModMix, kAudioUnitScope_Global, 0, Float(ringModMix) * 100.0, 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_SoftClipGain, kAudioUnitScope_Global, 0, Float(softClipGain), 0)
-            AudioUnitSetParameter(internalAU, kDistortionParam_FinalMix, kAudioUnitScope_Global, 0, Float(finalMix) * 100.0, 0)
+
+            let effect = _Self.effect
+            au = AUWrapper(effect)
+
+            super.init(avAudioNode: effect, attach: true)
+
+            input?.addConnectionPoint(self)
+
+            au[kDistortionParam_Delay] = delay
+            au[kDistortionParam_Decay] = decay
+            au[kDistortionParam_DelayMix] = delayMix * 100
+            au[kDistortionParam_Decimation] = decimation * 100
+            au[kDistortionParam_Rounding] = rounding * 100
+            au[kDistortionParam_DecimationMix] = decimationMix * 100
+            au[kDistortionParam_LinearTerm] = linearTerm * 100
+            au[kDistortionParam_SquaredTerm] = squaredTerm * 100
+            au[kDistortionParam_CubicTerm] = cubicTerm * 100
+            au[kDistortionParam_PolynomialMix] = polynomialMix * 100
+            au[kDistortionParam_RingModFreq1] = ringModFreq1
+            au[kDistortionParam_RingModFreq2] = ringModFreq2
+            au[kDistortionParam_RingModBalance] = ringModBalance * 100
+            au[kDistortionParam_RingModMix] = ringModMix * 100
+            au[kDistortionParam_SoftClipGain] = softClipGain
+            au[kDistortionParam_FinalMix] = finalMix * 100
     }
-    
+
     // MARK: - Control
 
     /// Function to start, play, or activate the node, all do the same thing
-    public func start() {
+    open func start() {
         if isStopped {
             finalMix = lastKnownMix
             isStarted = true
@@ -414,11 +244,17 @@ public class AKDistortion: AKNode, AKToggleable {
     }
 
     /// Function to stop or bypass the node, both are equivalent
-    public func stop() {
+    open func stop() {
         if isPlaying {
             lastKnownMix = finalMix
             finalMix = 0
             isStarted = false
         }
+    }
+
+    /// Disconnect the node
+    override open func disconnect() {
+        stop()
+        disconnect(nodes: [self.avAudioNode])
     }
 }
