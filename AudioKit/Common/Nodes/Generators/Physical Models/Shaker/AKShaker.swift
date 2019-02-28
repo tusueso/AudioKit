@@ -3,7 +3,7 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2018 AudioKit. All rights reserved.
 //
 
 /// Type of shaker to use
@@ -92,36 +92,27 @@ open class AKShaker: AKNode, AKToggleable, AKComponent {
 
     fileprivate var amplitudeParameter: AUParameter?
 
-    /// Ramp Time represents the speed at which parameters are allowed to change
-    open dynamic var rampTime: Double = AKSettings.rampTime {
-        willSet {
-            internalAU?.rampTime = newValue
-        }
-    }
-
     /// Type of shaker to use
     open var type: AKShakerType = .maraca {
         willSet {
-            if type != newValue {
-                internalAU?.type = type.rawValue
-            }
+            guard type != newValue else { return }
+            internalAU?.type = Double(type.rawValue)
         }
     }
 
     /// Amplitude
-    open dynamic var amplitude: Double = 0.5 {
+    @objc open dynamic var amplitude: Double = 0.5 {
         willSet {
-            if amplitude != newValue {
-                if let existingToken = token {
-                    amplitudeParameter?.setValue(Float(newValue), originator: existingToken)
-                }
+            guard amplitude != newValue else { return }
+            if let existingToken = token {
+                amplitudeParameter?.setValue(Float(newValue), originator: existingToken)
             }
         }
     }
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    open dynamic var isStarted: Bool {
-        return internalAU?.isPlaying() ?? false
+    @objc open dynamic var isStarted: Bool {
+        return internalAU?.isPlaying ?? false
     }
 
     // MARK: - Initialization
@@ -146,44 +137,51 @@ open class AKShaker: AKNode, AKToggleable, AKComponent {
         super.init()
         AVAudioUnit._instantiate(with: _Self.ComponentDescription) { [weak self] avAudioUnit in
 
+            self?.avAudioUnit = avAudioUnit
             self?.avAudioNode = avAudioUnit
             self?.internalAU = avAudioUnit.auAudioUnit as? AKAudioUnitType
         }
 
         guard let tree = internalAU?.parameterTree else {
+            AKLog("Parameter Tree Failed")
             return
         }
 
         amplitudeParameter = tree["amplitude"]
 
-        token = tree.token (byAddingParameterObserver: { [weak self] address, value in
+        token = tree.token(byAddingParameterObserver: { [weak self] _, _ in
 
+            guard let _ = self else {
+                AKLog("Unable to create strong reference to self")
+                return
+            } // Replace _ with strongSelf if needed
             DispatchQueue.main.async {
-                if address == self?.amplitudeParameter?.address {
-                    self?.amplitude = Double(value)
-                }
+                // This node does not change its own values so we won't add any
+                // value observing, but if you need to, this is where that goes.
             }
         })
-        internalAU?.type = type.rawValue
-        internalAU?.amplitude = Float(amplitude)
+        internalAU?.type = Double(type.rawValue)
+        internalAU?.amplitude = Double(amplitude)
     }
 
     /// Trigger the sound with an optional set of parameters
     /// - amplitude amplitude: Volume
     ///
-    open func trigger(amplitude: Double = 0.5) {
-        self.amplitude = amplitude
+    open func trigger(amplitude: Double = -1) {
+        if amplitude != -1 {
+            self.amplitude = amplitude
+        }
         internalAU?.start()
-        internalAU?.triggerType(type.rawValue, amplitude: Float(amplitude))
+        internalAU?.triggerType(type.rawValue, amplitude: Float(self.amplitude))
     }
 
     /// Function to start, play, or activate the node, all do the same thing
-    open func start() {
+    @objc open func start() {
         internalAU?.start()
     }
 
     /// Function to stop or bypass the node, both are equivalent
-    open func stop() {
+    @objc open func stop() {
         internalAU?.stop()
     }
 }

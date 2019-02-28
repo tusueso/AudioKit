@@ -1,4 +1,4 @@
-//: ## Low Pass Filter Operation
+//: ## Korg Low Pass Filter Operation
 //:
 import AudioKitPlaygrounds
 import AudioKit
@@ -25,7 +25,7 @@ let filteredPlayer = AKOperationEffect(player) { player, _ in
 //: Mixdown and playback
 let mixer = AKDryWetMixer(filteredNoise, filteredPlayer, balance: 0.5)
 AudioKit.output = mixer
-AudioKit.start()
+try AudioKit.start()
 
 whiteNoise.start()
 player.play()

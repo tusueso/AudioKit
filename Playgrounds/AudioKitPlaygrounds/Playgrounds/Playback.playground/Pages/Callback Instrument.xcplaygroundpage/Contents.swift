@@ -13,9 +13,10 @@ var sequencer = AKSequencer()
 var tempo = 120.0
 var division = 1
 
-var callbacker = AKCallbackInstrument { status, note, _ in
-    if status == .noteOn {
-        print("Start Note \(note) at \(sequencer.currentPosition.seconds)")
+var callbacker = AKMIDICallbackInstrument { statusByte, note, _ in
+    guard let midiStatus = AKMIDIStatus(statusByte: statusByte) else { return }
+    if midiStatus == .noteOn {
+        AKLog("Start Note \(note) at \(sequencer.currentPosition.seconds)")
     }
 }
 
@@ -37,25 +38,23 @@ sequencer.setTempo(tempo)
 
 // We must link the clock's output to AudioKit (even if we don't need the sound)
 //AudioKit.output = callbacker
-//AudioKit.start()
+//try AudioKit.start()
 
 //: Create a simple user interface
+import AudioKitUI
 
-class PlaygroundView: AKPlaygroundView {
-    override func setup() {
+class LiveView: AKLiveViewController {
+    override func viewDidLoad() {
         addTitle("Callback Instrument")
 
-        addSubview(AKButton(title: "Play") {
+        addView(AKButton(title: "Play") { _ in
             sequencer.play()
-            return ""
         })
-        addSubview(AKButton(title: "Pause", color: AKColor.red) {
+        addView(AKButton(title: "Pause") { _ in
             sequencer.stop()
-            return ""
         })
-        addSubview(AKButton(title: "Rewind", color: AKColor.cyan) {
+        addView(AKButton(title: "Rewind") { _ in
             sequencer.rewind()
-            return ""
         })
         addLabel("Open the console log to show output.")
     }
@@ -64,5 +63,5 @@ sequencer.play()
 
 import PlaygroundSupport
 PlaygroundPage.current.needsIndefiniteExecution = true
-PlaygroundPage.current.liveView = PlaygroundView()
+PlaygroundPage.current.liveView = LiveView()
 //: [TOC](Table%20Of%20Contents) | [Previous](@previous) | [Next](@next)

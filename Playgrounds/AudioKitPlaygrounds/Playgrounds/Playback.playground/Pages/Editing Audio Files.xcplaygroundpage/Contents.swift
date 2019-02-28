@@ -5,7 +5,7 @@ import AudioKit
 
 //: First load the drumloop
 
-let loop = try AKAudioFile(readFileName: "drumloop.wav", baseDir: .resources)
+let loop = try AKAudioFile(readFileName: "drumloop.wav")
 
 //: You may have noticed that the drumloop doesn't loop so well. Let's fix this...
 let fixedLoop = try loop.extracted(fromSample: 0, toSample: Int64(3.42 * 44_100))
@@ -53,9 +53,9 @@ var sequence = try threeTimesLoop.appendedBy(file: fixedLoop)
 //: Next, we append a random sequence of 16 sixteenth of audio to build our random drum solo...
 
 for i in 0..<16 {
-    let newSampleIndex = (0..<samplesBox.count).randomElement()
+    let newSampleIndex = (0..<samplesBox.count).randomElement()!
     let newSound = samplesBox[newSampleIndex]
-    print("picked sample #\(newSampleIndex) name: \(newSound.fileNamePlusExtension)")
+    AKLog("picked sample #\(newSampleIndex) name: \(newSound.fileNamePlusExtension)")
     var newFile = try sequence.appendedBy(file: newSound)
     sequence = newFile
 }
@@ -68,7 +68,7 @@ let sequencePlayer = try AKAudioPlayer(file: sequence)
 sequencePlayer.looping = true
 
 AudioKit.output = sequencePlayer
-AudioKit.start()
+try AudioKit.start()
 sequencePlayer.play()
 
 import PlaygroundSupport

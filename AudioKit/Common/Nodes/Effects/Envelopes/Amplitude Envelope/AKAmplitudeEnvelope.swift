@@ -3,14 +3,13 @@
 //  AudioKit
 //
 //  Created by Aurelius Prochazka, revision history on Github.
-//  Copyright © 2017 Aurelius Prochazka. All rights reserved.
+//  Copyright © 2018 AudioKit. All rights reserved.
 //
 
 /// Triggerable classic ADSR envelope
 ///
-open class AKAmplitudeEnvelope: AKNode, AKToggleable, AKComponent {
+open class AKAmplitudeEnvelope: AKNode, AKToggleable, AKComponent, AKInput {
     public typealias AKAudioUnitType = AKAmplitudeEnvelopeAudioUnit
-
     /// Four letter unique description of the node
     public static let ComponentDescription = AudioComponentDescription(effect: "adsr")
 
@@ -23,73 +22,96 @@ open class AKAmplitudeEnvelope: AKNode, AKToggleable, AKComponent {
     fileprivate var sustainLevelParameter: AUParameter?
     fileprivate var releaseDurationParameter: AUParameter?
 
-    /// Ramp Time represents the speed at which parameters are allowed to change
-    open dynamic var rampTime: Double = AKSettings.rampTime {
+    /// Lower and upper bounds for Attack Duration
+    public static let attackDurationRange = 0.0 ... 99.0
+
+    /// Lower and upper bounds for Decay Duration
+    public static let decayDurationRange = 0.0 ... 99.0
+
+    /// Lower and upper bounds for Sustain Level
+    public static let sustainLevelRange = 0.0 ... 99.0
+
+    /// Lower and upper bounds for Release Duration
+    public static let releaseDurationRange = 0.0 ... 99.0
+
+    /// Initial value for Attack Duration
+    public static let defaultAttackDuration = 0.1
+
+    /// Initial value for Decay Duration
+    public static let defaultDecayDuration = 0.1
+
+    /// Initial value for Sustain Level
+    public static let defaultSustainLevel = 1.0
+
+    /// Initial value for Release Duration
+    public static let defaultReleaseDuration = 0.1
+
+    /// Ramp Duration represents the speed at which parameters are allowed to change
+    @objc open dynamic var rampDuration: Double = AKSettings.rampDuration {
         willSet {
-            internalAU?.rampTime = newValue
+            internalAU?.rampDuration = newValue
         }
     }
 
-    /// Attack time
-    open dynamic var attackDuration: Double = 0.1 {
+    /// Attack Duration in seconds
+    @objc open dynamic var attackDuration: Double = defaultAttackDuration {
         willSet {
-            if attackDuration != newValue {
-                if internalAU?.isSetUp() ?? false {
-                    if let existingToken = token {
-                        attackDurationParameter?.setValue(Float(newValue), originator: existingToken)
-                    }
-                } else {
-                    internalAU?.attackDuration = Float(newValue)
+            guard attackDuration != newValue else { return }
+            if internalAU?.isSetUp ?? false {
+                if let existingToken = token {
+                    attackDurationParameter?.setValue(Float(newValue), originator: existingToken)
+                    return
                 }
             }
+            internalAU?.setParameterImmediately(.attackDuration, value: newValue)
         }
     }
-    /// Decay time
-    open dynamic var decayDuration: Double = 0.1 {
+
+    /// Decay Duration in seconds
+    @objc open dynamic var decayDuration: Double = defaultDecayDuration {
         willSet {
-            if decayDuration != newValue {
-                if internalAU?.isSetUp() ?? false {
-                    if let existingToken = token {
-                        decayDurationParameter?.setValue(Float(newValue), originator: existingToken)
-                    }
-                } else {
-                    internalAU?.decayDuration = Float(newValue)
+            guard decayDuration != newValue else { return }
+            if internalAU?.isSetUp ?? false {
+                if let existingToken = token {
+                    decayDurationParameter?.setValue(Float(newValue), originator: existingToken)
+                    return
                 }
             }
+            internalAU?.setParameterImmediately(.decayDuration, value: newValue)
         }
     }
+
     /// Sustain Level
-    open dynamic var sustainLevel: Double = 1.0 {
+    @objc open dynamic var sustainLevel: Double = defaultSustainLevel {
         willSet {
-            if sustainLevel != newValue {
-                if internalAU?.isSetUp() ?? false {
-                    if let existingToken = token {
-                        sustainLevelParameter?.setValue(Float(newValue), originator: existingToken)
-                    }
-                } else {
-                    internalAU?.sustainLevel = Float(newValue)
+            guard sustainLevel != newValue else { return }
+            if internalAU?.isSetUp ?? false {
+                if let existingToken = token {
+                    sustainLevelParameter?.setValue(Float(newValue), originator: existingToken)
+                    return
                 }
             }
+            internalAU?.setParameterImmediately(.sustainLevel, value: newValue)
         }
     }
-    /// Release time
-    open dynamic var releaseDuration: Double = 0.1 {
+
+    /// Release Duration in seconds
+    @objc open dynamic var releaseDuration: Double = defaultReleaseDuration {
         willSet {
-            if releaseDuration != newValue {
-                if internalAU?.isSetUp() ?? false {
-                    if let existingToken = token {
-                        releaseDurationParameter?.setValue(Float(newValue), originator: existingToken)
-                    }
-                } else {
-                    internalAU?.releaseDuration = Float(newValue)
+            guard releaseDuration != newValue else { return }
+            if internalAU?.isSetUp ?? false {
+                if let existingToken = token {
+                    releaseDurationParameter?.setValue(Float(newValue), originator: existingToken)
+                    return
                 }
             }
+            internalAU?.setParameterImmediately(.releaseDuration, value: newValue)
         }
     }
 
     /// Tells whether the node is processing (ie. started, playing, or active)
-    open dynamic var isStarted: Bool {
-        return internalAU?.isPlaying() ?? false
+    @objc open dynamic var isStarted: Bool {
+        return internalAU?.isPlaying ?? false
     }
 
     // MARK: - Initialization
@@ -98,17 +120,18 @@ open class AKAmplitudeEnvelope: AKNode, AKToggleable, AKComponent {
     ///
     /// - Parameters:
     ///   - input: Input node to process
-    ///   - attackDuration: Attack time
-    ///   - decayDuration: Decay time
+    ///   - attackDuration: Attack Duration in seconds
+    ///   - decayDuration: Decay Duration in seconds
     ///   - sustainLevel: Sustain Level
-    ///   - releaseDuration: Release time
+    ///   - releaseDuration: Release Duration in seconds
     ///
-    public init(
-        _ input: AKNode?,
-        attackDuration: Double = 0.1,
-        decayDuration: Double = 0.1,
-        sustainLevel: Double = 1.0,
-        releaseDuration: Double = 0.1) {
+    @objc public init(
+        _ input: AKNode? = nil,
+        attackDuration: Double = defaultAttackDuration,
+        decayDuration: Double = defaultDecayDuration,
+        sustainLevel: Double = defaultSustainLevel,
+        releaseDuration: Double = defaultReleaseDuration
+        ) {
 
         self.attackDuration = attackDuration
         self.decayDuration = decayDuration
@@ -119,14 +142,18 @@ open class AKAmplitudeEnvelope: AKNode, AKToggleable, AKComponent {
         super.init()
 
         AVAudioUnit._instantiate(with: _Self.ComponentDescription) { [weak self] avAudioUnit in
-
-            self?.avAudioNode = avAudioUnit
-            self?.internalAU = avAudioUnit.auAudioUnit as? AKAudioUnitType
-
-            input?.addConnectionPoint(self!)
+            guard let strongSelf = self else {
+                AKLog("Error: self is nil")
+                return
+            }
+            strongSelf.avAudioUnit = avAudioUnit
+            strongSelf.avAudioNode = avAudioUnit
+            strongSelf.internalAU = avAudioUnit.auAudioUnit as? AKAudioUnitType
+            input?.connect(to: strongSelf)
         }
 
         guard let tree = internalAU?.parameterTree else {
+            AKLog("Parameter Tree Failed")
             return
         }
 
@@ -135,36 +162,33 @@ open class AKAmplitudeEnvelope: AKNode, AKToggleable, AKComponent {
         sustainLevelParameter = tree["sustainLevel"]
         releaseDurationParameter = tree["releaseDuration"]
 
-        token = tree.token (byAddingParameterObserver: { [weak self] address, value in
+        token = tree.token(byAddingParameterObserver: { [weak self] _, _ in
 
+            guard let _ = self else {
+                AKLog("Unable to create strong reference to self")
+                return
+            } // Replace _ with strongSelf if needed
             DispatchQueue.main.async {
-                if address == self?.attackDurationParameter?.address {
-                    self?.attackDuration = Double(value)
-                } else if address == self?.decayDurationParameter?.address {
-                    self?.decayDuration = Double(value)
-                } else if address == self?.sustainLevelParameter?.address {
-                    self?.sustainLevel = Double(value)
-                } else if address == self?.releaseDurationParameter?.address {
-                    self?.releaseDuration = Double(value)
-                }
+                // This node does not change its own values so we won't add any
+                // value observing, but if you need to, this is where that goes.
             }
         })
 
-        internalAU?.attackDuration = Float(attackDuration)
-        internalAU?.decayDuration = Float(decayDuration)
-        internalAU?.sustainLevel = Float(sustainLevel)
-        internalAU?.releaseDuration = Float(releaseDuration)
+        internalAU?.setParameterImmediately(.attackDuration, value: attackDuration)
+        internalAU?.setParameterImmediately(.decayDuration, value: decayDuration)
+        internalAU?.setParameterImmediately(.sustainLevel, value: sustainLevel)
+        internalAU?.setParameterImmediately(.releaseDuration, value: releaseDuration)
     }
 
     // MARK: - Control
 
     /// Function to start, play, or activate the node, all do the same thing
-    open func start() {
+    @objc open func start() {
         internalAU?.start()
     }
 
     /// Function to stop or bypass the node, both are equivalent
-    open func stop() {
+    @objc open func stop() {
         internalAU?.stop()
     }
 }
