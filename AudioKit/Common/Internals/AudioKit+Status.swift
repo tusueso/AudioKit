@@ -17,7 +17,7 @@ extension AudioKit {
 
     @objc static var shouldBeRunning = false
 
-    #if os(iOS)
+    #if os(iOS) && !targetEnvironment(macCatalyst)
     var isIAAConnected: Bool {
         do {
             let result: UInt32? = try AudioKit.engine.outputNode.audioUnit?.getValue(forProperty: kAudioUnitProperty_IsInterAppConnected)
